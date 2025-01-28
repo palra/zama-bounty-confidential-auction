@@ -40,11 +40,12 @@ library HalfEncryptedFenwickTree {
     function init(Storage storage _this) internal {
         _this.largestIndex = TFHE.asEuint8(0);
         TFHE.allowThis(_this.largestIndex);
+        _this.tree[0] = TFHE.asEuint128(0);
+        TFHE.allowThis(_this.tree[0]);
     }
 
-    /// @notice Update the value at a given index
-    /// @dev Increments the cumulative quantity stored at the given index.
-    /// Preserves properties of the Fenwick tree. For increased privacy, consider multiple `0` quantity updates at
+    /// @notice Increments the cumulative quantity stored at a given index.
+    /// @dev Preserves properties of the Fenwick tree. For increased privacy, consider multiple `0` quantity updates at
     /// random keys.
     function update(Storage storage _this, uint8 atKey, euint128 quantity) internal {
         if (atKey == 0) revert FT_InvalidPriceRange();
@@ -73,6 +74,25 @@ library HalfEncryptedFenwickTree {
         TFHE.allowThis(_this.tree[0]);
     }
 
+    /// @notice Queries the cumulative quantity at a given index.
+    function query(Storage storage _this, uint8 atKey) internal returns (euint128) {
+        if (atKey == 0) revert FT_InvalidPriceRange();
+
+        euint128 sum = TFHE.asEuint128(0);
+        uint8 idx = atKey;
+
+        // We're guaranteed that decrementing by lsb will eventually reach 0.
+        while (idx != 0) {
+            sum = TFHE.add(sum, _this.tree[idx]);
+            unchecked {
+                idx -= lsb(idx);
+            }
+        }
+
+        TFHE.allowThis(sum);
+        return sum;
+    }
+
     /// @dev Searching a key requires logic that depends of the result of subsequent decryptions. As decryption is an
     /// asynchronous process in the fhEVM, we store the state of this computation here. Decryption responsibility is
     /// left to the calling contract.
@@ -85,11 +105,20 @@ library HalfEncryptedFenwickTree {
         euint8 foundIdx;
     }
 
+    /// @notice Initializes the search key iterator, answering the query "what is the first index at which the
+    /// cumulative quantity is equal or higher than targetQuantity?". If that index does not exists, the search will
+    /// resolve to the largest index.
+    /// @dev In the context of the single-price auction, we will need to fallback to the latest index to make sure
+    /// that auctions that did not fulfilled the entirety of the distributed tokens will still point to the clearing
+    /// price. This behavior can be changed if needed, for instance setting `fallbackIdx` to `TFHE.asEuint8(0)` can be
+    /// used to mark a "not found" index.
     function startSearchKey(Storage storage _this, uint128 targetQuantity) internal returns (SearchKeyIterator memory) {
         SearchKeyIterator memory it;
         it.rank = TFHE.asEuint128(targetQuantity);
+        TFHE.allowThis(it.rank);
         it.fallbackIdx = _this.largestIndex;
-        it.idx = euint8.wrap(0);
+        it.idx = TFHE.asEuint8(0);
+        TFHE.allowThis(it.idx);
         it.foundIdx = euint8.wrap(0);
 
         return it;
@@ -123,5 +152,10 @@ library HalfEncryptedFenwickTree {
         TFHE.allowThis(it.rank);
         it.idx = TFHE.select(isRankLteTreeIdx, TFHE.sub(idx, lsbDiv2), TFHE.add(idx, lsbDiv2));
         TFHE.allowThis(it.idx);
+    }
+
+    /// @dev Returns the encrypted sum of all inserted values. Decryption is left to the caller.
+    function totalValue(Storage storage _tree) internal view returns (euint128) {
+        return _tree.tree[0];
     }
 }

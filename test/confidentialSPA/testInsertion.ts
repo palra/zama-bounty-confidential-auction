@@ -1,5 +1,5 @@
 import { expect } from "chai";
-import { formatEther, parseEther } from "ethers";
+import { parseEther } from "ethers";
 import { FhevmInstance } from "fhevmjs/node";
 import { ethers } from "hardhat";
 

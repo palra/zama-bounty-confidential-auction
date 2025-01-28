@@ -28,6 +28,9 @@ jobs:
           cache: "pnpm"
           node-version: "lts/*"
 
+      - name: "Setup test .env"
+        run: "cp .env.example .env"
+
       - name: "Install the dependencies"
         run: "pnpm install"
 

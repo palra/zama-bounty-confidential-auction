@@ -6,7 +6,6 @@ import "fhevm/lib/TFHE.sol";
 import "fhevm/config/ZamaFHEVMConfig.sol";
 import "fhevm/config/ZamaGatewayConfig.sol";
 import "fhevm/gateway/GatewayCaller.sol";
-import "hardhat/console.sol";
 
 import "./lib/HalfEncryptedFenwickTree.sol";
 import "./lib/TimeLockModifier.sol";
