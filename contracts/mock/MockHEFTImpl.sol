@@ -14,29 +14,29 @@ contract MockHEFTImpl is SepoliaZamaFHEVMConfig, SepoliaZamaGatewayConfig, Gatew
     HalfEncryptedFenwickTree.Storage tree;
 
     event Found(uint8);
-    event Total(uint128);
+    event Total(uint64);
 
     constructor() {
         tree.init();
     }
 
     function update(uint8 key, einput encryptedQuantity, bytes calldata inputProof) external {
-        euint128 quantity = TFHE.asEuint128(encryptedQuantity, inputProof);
+        euint64 quantity = TFHE.asEuint64(encryptedQuantity, inputProof);
         tree.update(key, quantity);
     }
 
-    euint128 public queryResult;
+    euint64 public queryResult;
 
-    function queryKey(uint8 key) external returns (euint128) {
+    function queryKey(uint8 key) external returns (euint64) {
         queryResult = tree.query(key);
         return queryResult;
     }
 
-    function totalValue() external view returns (euint128) {
+    function totalValue() external view returns (euint64) {
         return tree.totalValue();
     }
 
-    function peekTreeAtKey(uint8 key) public view returns (euint128) {
+    function peekTreeAtKey(uint8 key) public view returns (euint64) {
         return tree.tree[key];
     }
 
@@ -46,12 +46,12 @@ contract MockHEFTImpl is SepoliaZamaFHEVMConfig, SepoliaZamaGatewayConfig, Gatew
         return !TFHE.isInitialized(searchIterator.foundIdx);
     }
 
-    function startSearchKey(uint128 atValue) external {
+    function startSearchKey(uint64 atValue) external {
         searchIterator = tree.startSearchKey(atValue);
         tree.stepSearchKey(searchIterator, 0);
     }
 
-    function startSearchKeyFallbackNotFound(uint128 atValue) external {
+    function startSearchKeyFallbackNotFound(uint64 atValue) external {
         searchIterator = tree.startSearchKey(atValue);
         searchIterator.fallbackIdx = TFHE.asEuint8(0);
         tree.stepSearchKey(searchIterator, 0);
@@ -60,10 +60,10 @@ contract MockHEFTImpl is SepoliaZamaFHEVMConfig, SepoliaZamaGatewayConfig, Gatew
     function stepSearchKey() external {
         uint256[] memory cts = new uint256[](1);
         cts[0] = Gateway.toUint256(searchIterator.idx);
-        Gateway.requestDecryption(cts, this.callback_searchKey_step.selector, 0, block.timestamp + 100, false);
+        Gateway.requestDecryption(cts, this.callbackSearchKeyStep.selector, 0, block.timestamp + 100, false);
     }
 
-    function callback_searchKey_step(uint256, uint8 idx) public onlyGateway {
+    function callbackSearchKeyStep(uint256, uint8 idx) public onlyGateway {
         tree.stepSearchKey(searchIterator, idx);
     }
 

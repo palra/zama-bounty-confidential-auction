@@ -40,6 +40,7 @@
     "fs-extra": "^10.1.0",
     "globals": "^15.9.0",
     "hardhat": "^2.22.8",
+    "hardhat-contract-sizer": "^2.10.0",
     "hardhat-deploy": "^0.12.4",
     "hardhat-gas-reporter": "^1.0.9",
     "hardhat-ignore-warnings": "^0.2.11",
@@ -53,6 +54,7 @@
     "solhint": "^3.4.0",
     "solhint-plugin-prettier": "^0.0.5",
     "solidity-coverage": "0.8.12",
+    "solidity-docgen": "0.6.0-beta.36",
     "sqlite3": "^5.1.7",
     "ts-generator": "^0.1.1",
     "ts-node": "^10.9.1",
@@ -94,6 +96,7 @@
     "mint-sepolia": "hardhat mint --amount 42 --network sepolia"
   },
   "dependencies": {
-    "@openzeppelin/contracts": "^5.0.2"
-  }
+    "@openzeppelin/contracts": "^5.1"
+  },
+  "packageManager": "pnpm@9.15.4+sha512.b2dc20e2fc72b3e18848459b37359a32064663e5627a51e4c74b2c29dd8e8e0491483c3abb40789cfd578bf362fb6ba8261b05f0387d76792ed6e23ea3b1b6a0"
 }

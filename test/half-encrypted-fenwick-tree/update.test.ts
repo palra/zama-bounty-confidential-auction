@@ -33,7 +33,7 @@ describe("Half-Confidential FenwickTree", () => {
     // console.log({
     //   idx: it.idx === 0n ? null : await debug.decrypt8(it.idx),
     //   fallbackIdx: await debug.decrypt8(it.fallbackIdx),
-    //   rank: await debug.decrypt128(it.rank),
+    //   rank: await debug.decrypt64(it.rank),
     //   foundIdx: it.foundIdx === 0n ? null : await debug.decrypt8(it.foundIdx),
     //   found: (await contract.isFound()) ? await contract.found() : null,
     // });
@@ -46,7 +46,7 @@ describe("Half-Confidential FenwickTree", () => {
       // console.log({
       //   idx: it.idx === 0n ? null : await debug.decrypt8(it.idx),
       //   fallbackIdx: await debug.decrypt8(it.fallbackIdx),
-      //   rank: await debug.decrypt128(it.rank),
+      //   rank: await debug.decrypt64(it.rank),
       //   foundIdx: it.foundIdx === 0n ? null : await debug.decrypt8(it.foundIdx),
       //   found: (await contract.isFound()) ? await contract.found() : null,
       // });
@@ -70,12 +70,12 @@ describe("Half-Confidential FenwickTree", () => {
     // const fheMaxGas = 10_000_000;
     // console.log("Query: FHE Gas", `${((fheGas / fheMaxGas) * 100).toFixed(2)}%`, fheGas);
 
-    return await debug.decrypt128(await contract.queryResult());
+    return await debug.decrypt64(await contract.queryResult());
   }
 
   async function update(key: number | bigint, amount: number | bigint) {
     const input = fhevm.createEncryptedInput(contractAddress, signers.alice.address);
-    input.add128(amount);
+    input.add64(amount);
 
     const encryptedInput = await input.encrypt();
     return await contract.connect(signers.alice).update(key, encryptedInput.handles[0], encryptedInput.inputProof);
@@ -90,7 +90,7 @@ describe("Half-Confidential FenwickTree", () => {
   });
 
   it("should have zero cumulative sum when no items are inserted", async () => {
-    expect(await debug.decrypt128(await contract.totalValue())).to.equal(0n);
+    expect(await debug.decrypt64(await contract.totalValue())).to.equal(0n);
 
     for (const [key, quantity] of [
       [1, 0],
@@ -100,7 +100,7 @@ describe("Half-Confidential FenwickTree", () => {
       [2 ** 8 - 1, 0],
     ]) {
       await (await contract.queryKey(key)).wait();
-      expect(await debug.decrypt128(await contract.queryResult())).to.equal(quantity);
+      expect(await debug.decrypt64(await contract.queryResult())).to.equal(quantity);
     }
 
     expect(await searchKey(2000)).to.equal(0n);
@@ -109,7 +109,7 @@ describe("Half-Confidential FenwickTree", () => {
   it("should insert a single value and have coherent query results", async () => {
     await update(100, 1337);
 
-    expect(await debug.decrypt128(await contract.totalValue())).to.equal(1337);
+    expect(await debug.decrypt64(await contract.totalValue())).to.equal(1337);
 
     // Single-key queries: cumulative quantity at given index
 
@@ -166,7 +166,7 @@ describe("Half-Confidential FenwickTree", () => {
       await update(key, quantity);
     }
 
-    expect(await debug.decrypt128(await contract.totalValue())).to.equal(100);
+    expect(await debug.decrypt64(await contract.totalValue())).to.equal(100);
 
     // Single-key queries
     for (const [key, quantity] of [

@@ -5,7 +5,10 @@ config:
   layout: elk
 ---
 stateDiagram-v2
-    [*] --> Active
+    [*] --> WaitDeposit
+
+    WaitDeposit --> Active: depositAuction() onlyAuctioneer
+    WaitDeposit --> Cancelled: cancel() onlyAuctioneer
 
     Active --> Active: bid(price, qty)
     Active --> Cancelled: cancel() onlyAuctioneer
@@ -18,40 +21,26 @@ stateDiagram-v2
     Active --> CheckBidders: _timed out_
 
     state Withdrawal {
-      state WithdrawalDecrypt <<fork>>
-      state WithdrawalDecrypted <<join>>
 
-      [*] --> WithdrawalDecrypt
-
-      WithdrawalDecrypt --> ClearingPrice
+      [*] -->  ClearingPrice
       state ClearingPrice {
         state ClearingPrice_IsFinished <<choice>>
         [*] --> ClearingPriceComputing
         ClearingPriceComputing --> ClearingPriceDecrypt: stepCompute()
         ClearingPriceDecrypt --> ClearingPrice_IsFinished: _wait decryption - set clearingPrice_
-        ClearingPrice_IsFinished --> [*]: _clearingPrice is defined_
+          ClearingPrice_IsFinished --> [*]: _clearingPrice is defined_
         ClearingPrice_IsFinished --> ClearingPriceComputing : _else_
       }
-      ClearingPrice --> WithdrawalDecrypted
-
-      WithdrawalDecrypt --> TotalQuantity
-      state TotalQuantity {
-        [*] --> TotalQuantityDecrypt
-        TotalQuantityDecrypt --> TotalQuantityWait: decryptTotalQuantity()
-        TotalQuantityWait --> [*]: _wait decryption - set totalQuantity_
-      }
-      TotalQuantity --> WithdrawalDecrypted
-
-      WithdrawalDecrypted --> WithdrawalReady
+      ClearingPrice --> WithdrawalReady
 
       state WithdrawalReady {
         [*] --> AuctioneerWaiting
-        AuctioneerWaiting --> AuctioneerWithdrawn: pullAuctioneer()
-        AuctioneerWithdrawn --> [*]
+        AuctioneerWaiting --> AuctioneerPulled: pullAuctioneer()
+        AuctioneerPulled --> [*]
         --
-        [*] --> BidderWaiting
-        BidderWaiting --> BidderWithdrawn: pullBid(bidIdx)
-        BidderWithdrawn --> [*]
+        [*] --> BidWaiting
+        BidWaiting --> BidPulled: pullBid(bidder, bidIdx)
+        BidPulled --> [*]
       }
 
       WithdrawalReady --> [*]

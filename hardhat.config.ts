@@ -1,10 +1,12 @@
 import "@nomicfoundation/hardhat-toolbox";
 import dotenv from "dotenv";
+import "hardhat-contract-sizer";
 import "hardhat-deploy";
 import "hardhat-ignore-warnings";
 import { HardhatUserConfig, extendProvider } from "hardhat/config";
 import { task } from "hardhat/config";
 import type { NetworkUserConfig } from "hardhat/types";
+import "solidity-docgen";
 
 import CustomProvider from "./CustomProvider";
 // Adjust the import path as needed

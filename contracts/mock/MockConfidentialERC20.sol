@@ -9,7 +9,7 @@ import "fhevm-contracts/contracts/token/ERC20/extensions/ConfidentialERC20Mintab
 /// @notice This contract implements an encrypted ERC20-like token with confidential balances using Zama's FHE library.
 /// @dev It supports typical ERC20 functionality such as transferring tokens, minting, and setting allowances,
 /// @dev but uses encrypted data types.
-contract MyConfidentialERC20 is SepoliaZamaFHEVMConfig, ConfidentialERC20Mintable {
+contract MockConfidentialERC20 is SepoliaZamaFHEVMConfig, ConfidentialERC20Mintable {
     /// @notice Constructor to initialize the token's name and symbol, and set up the owner
     /// @param name_ The name of the token
     /// @param symbol_ The symbol of the token
