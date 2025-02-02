@@ -75,6 +75,7 @@ contract ConfidentialSPA is
     uint64 public immutable MAX_PRICE;
 
     euint64 private immutable E_AUCTION_TOKEN_SUPPLY;
+    euint128 private immutable EU128_ZERO;
     euint64 private immutable EU64_ZERO;
     euint8 private immutable EU8_ZERO;
 
@@ -86,9 +87,9 @@ contract ConfidentialSPA is
     HalfEncryptedFenwickTree.SearchKeyIterator private _searchIterator;
 
     /// @dev Stores cumulative bid amounts, per index.
-    HalfEncryptedFenwickTree.Storage private priceMap; //! TODO: use euint128 leaf values to prevent overflows
+    HalfEncryptedFenwickTree.Storage private priceMap;
     /// @dev Stores total bid quantity per price range.
-    mapping(uint8 => euint64) private priceToQuantity; //! TODO: switch to euint128 to reasonably prevent any overflow
+    mapping(uint8 => euint128) private priceToQuantity;
     /// @dev Keeps track of base token deposits. Only used for funds recovery on auction cancellation.
     mapping(address => euint64) private addressToBaseTokenDeposit;
     /// @dev Keeps track of individual bids.
@@ -149,8 +150,12 @@ contract ConfidentialSPA is
 
         priceMap.init();
 
+        EU128_ZERO = TFHE.asEuint128(0);
+        TFHE.allowThis(EU128_ZERO);
         EU64_ZERO = TFHE.asEuint64(0);
         TFHE.allowThis(EU64_ZERO);
+        EU8_ZERO = TFHE.asEuint8(0);
+        TFHE.allowThis(EU8_ZERO);
     }
 
     function depositAuction() external onlyState(AuctionState.WaitDeposit) onlyOwner {
@@ -203,7 +208,8 @@ contract ConfidentialSPA is
             quantity,
             EU64_ZERO
         );
-        priceMap.update(tick, quantity); //! TODO: switch to euint128
+        //* should not overflow, add uint64 to uint128
+        priceMap.update(tick, TFHE.asEuint128(quantity));
 
         // Side-effects:
 
@@ -214,9 +220,9 @@ contract ConfidentialSPA is
 
         // - Update quantity accumulator at a given tick
         if (!TFHE.isInitialized(priceToQuantity[tick])) {
-            priceToQuantity[tick] = EU64_ZERO;
+            priceToQuantity[tick] = EU128_ZERO;
         }
-        //! Can overflow if the auction supply is large enough and enough bidders put auctions at the same price range
+        //* should not overflow: add uint64 to uint128
         priceToQuantity[tick] = TFHE.add(priceToQuantity[tick], quantity);
         TFHE.allowThis(priceToQuantity[tick]);
 
@@ -344,7 +350,8 @@ contract ConfidentialSPA is
         address auctioneer = owner();
 
         // Return non-allocated tokens
-        euint64 auctionAllocated = TFHE.min(totalTokens, priceMap.totalValue());
+        //* should not overflow, totalTokens is <= uint64.max
+        euint64 auctionAllocated = TFHE.asEuint64(TFHE.min(totalTokens, priceMap.totalValue()));
         euint64 auctionToTransfer = TFHE.sub(totalTokens, auctionAllocated);
         _transferTo(auctioneer, auctionToTransfer, AUCTION_TOKEN);
 
@@ -388,7 +395,7 @@ contract ConfidentialSPA is
             baseToTransfer = _bid.deposit;
             // Saving some gas by deleting the now unused priceToQuantity mapping
             // TODO: check gas refund
-            priceToQuantity[_bid.price] = euint64.wrap(0);
+            priceToQuantity[_bid.price] = euint128.wrap(0);
         } else if (_bid.price < clearingPriceTick) {
             // Offer accepted, below clearing price = entirely fulfilled
             uint128 clearingPrice = uint128(tickToPrice(clearingPriceTick));
@@ -404,7 +411,7 @@ contract ConfidentialSPA is
 
             // Saving some gas by deleting the now unused priceToQuantity mapping
             // TODO: check gas refund
-            priceToQuantity[_bid.price] = euint64.wrap(0);
+            priceToQuantity[_bid.price] = euint128.wrap(0);
         } else {
             uint128 clearingPrice = uint128(tickToPrice(clearingPriceTick));
             // Offer accepted, at clearing price = at least partially fulfilled
@@ -412,16 +419,17 @@ contract ConfidentialSPA is
 
             // Compute amount of tokens that overflow besides the auction token supply.
             //* should not underflow: priceMap.query(x) <= priceMap.totalValue() - properties of the Fenwick tree
-            euint64 quantityOverAuctionAvailable = TFHE.sub(
+            euint128 quantityOverAuctionAvailable = TFHE.sub(
                 priceMap.query(clearingPriceTick), // cumulative qty at clearing price
                 TFHE.min(totalTokens, priceMap.totalValue()) // total allocated tokens
             );
 
-            // Substract without underflow, capped at 0.
+            // Substract without underflow, clamp at 0.
             euint64 allocationAtPrice = TFHE.select(
                 TFHE.ge(priceToQuantity[clearingPriceTick], quantityOverAuctionAvailable),
-                TFHE.sub(priceToQuantity[clearingPriceTick], quantityOverAuctionAvailable),
-                TFHE.asEuint64(0)
+                //* should not overflow: TOOD: prove it ._.
+                TFHE.asEuint64(TFHE.sub(priceToQuantity[clearingPriceTick], quantityOverAuctionAvailable)),
+                EU64_ZERO
             );
 
             // In case of competing bids at the same price, first arrived first served.

@@ -32,7 +32,7 @@ library HalfEncryptedFenwickTree {
         /// Fixed-size array of size `type(uint8).max`. Stores `type(uint8).max - 1` keys.
         /// Using 1-indexed arrays for convenience working with `lsb`.
         /// We reserve index `0` to store the total cumulative quantity. Hence, `0` is not a valid key.
-        mapping(uint8 => euint64) tree;
+        mapping(uint8 => euint128) tree;
         /// Keeps track of the largest insertedValue. This one is encrypted
         euint8 largestIndex;
     }
@@ -40,14 +40,14 @@ library HalfEncryptedFenwickTree {
     function init(Storage storage _this) internal {
         _this.largestIndex = TFHE.asEuint8(0);
         TFHE.allowThis(_this.largestIndex);
-        _this.tree[0] = TFHE.asEuint64(0);
+        _this.tree[0] = TFHE.asEuint128(0);
         TFHE.allowThis(_this.tree[0]);
     }
 
     /// @notice Increments the cumulative quantity stored at a given index.
     /// @dev Preserves properties of the Fenwick tree. For increased privacy, consider multiple `0` quantity updates at
     /// random keys.
-    function update(Storage storage _this, uint8 atKey, euint64 quantity) internal {
+    function update(Storage storage _this, uint8 atKey, euint128 quantity) internal {
         if (atKey == 0) revert FT_InvalidPriceRange();
 
         _this.largestIndex = TFHE.select(
@@ -75,10 +75,10 @@ library HalfEncryptedFenwickTree {
     }
 
     /// @notice Queries the cumulative quantity at a given index.
-    function query(Storage storage _this, uint8 atKey) internal returns (euint64) {
+    function query(Storage storage _this, uint8 atKey) internal returns (euint128) {
         if (atKey == 0) revert FT_InvalidPriceRange();
 
-        euint64 sum = TFHE.asEuint64(0);
+        euint128 sum = TFHE.asEuint128(0);
         uint8 idx = atKey;
 
         // We're guaranteed that decrementing by lsb will eventually reach 0.
@@ -97,7 +97,7 @@ library HalfEncryptedFenwickTree {
     /// asynchronous process in the fhEVM, we store the state of this computation here. Decryption responsibility is
     /// left to the calling contract.
     struct SearchKeyIterator {
-        euint64 rank;
+        euint128 rank;
         euint8 fallbackIdx;
         /// When unset, means the search is not running.
         euint8 idx;
@@ -112,9 +112,9 @@ library HalfEncryptedFenwickTree {
     /// that auctions that did not fulfilled the entirety of the distributed tokens will still point to the clearing
     /// price. This behavior can be changed if needed, for instance setting `fallbackIdx` to `TFHE.asEuint8(0)` can be
     /// used to mark a "not found" index.
-    function startSearchKey(Storage storage _this, uint64 targetQuantity) internal returns (SearchKeyIterator memory) {
+    function startSearchKey(Storage storage _this, uint128 targetQuantity) internal returns (SearchKeyIterator memory) {
         SearchKeyIterator memory it;
-        it.rank = TFHE.asEuint64(targetQuantity);
+        it.rank = TFHE.asEuint128(targetQuantity);
         TFHE.allowThis(it.rank);
         it.fallbackIdx = _this.largestIndex;
         it.idx = TFHE.asEuint8(0);
@@ -155,7 +155,7 @@ library HalfEncryptedFenwickTree {
     }
 
     /// @dev Returns the encrypted sum of all inserted values. Decryption is left to the caller.
-    function totalValue(Storage storage _tree) internal view returns (euint64) {
+    function totalValue(Storage storage _tree) internal view returns (euint128) {
         return _tree.tree[0];
     }
 }

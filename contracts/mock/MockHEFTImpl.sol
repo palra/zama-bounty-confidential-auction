@@ -14,29 +14,29 @@ contract MockHEFTImpl is SepoliaZamaFHEVMConfig, SepoliaZamaGatewayConfig, Gatew
     HalfEncryptedFenwickTree.Storage tree;
 
     event Found(uint8);
-    event Total(uint64);
+    event Total(uint128);
 
     constructor() {
         tree.init();
     }
 
     function update(uint8 key, einput encryptedQuantity, bytes calldata inputProof) external {
-        euint64 quantity = TFHE.asEuint64(encryptedQuantity, inputProof);
+        euint128 quantity = TFHE.asEuint128(encryptedQuantity, inputProof);
         tree.update(key, quantity);
     }
 
-    euint64 public queryResult;
+    euint128 public queryResult;
 
-    function queryKey(uint8 key) external returns (euint64) {
+    function queryKey(uint8 key) external returns (euint128) {
         queryResult = tree.query(key);
         return queryResult;
     }
 
-    function totalValue() external view returns (euint64) {
+    function totalValue() external view returns (euint128) {
         return tree.totalValue();
     }
 
-    function peekTreeAtKey(uint8 key) public view returns (euint64) {
+    function peekTreeAtKey(uint8 key) public view returns (euint128) {
         return tree.tree[key];
     }
 
@@ -46,12 +46,12 @@ contract MockHEFTImpl is SepoliaZamaFHEVMConfig, SepoliaZamaGatewayConfig, Gatew
         return !TFHE.isInitialized(searchIterator.foundIdx);
     }
 
-    function startSearchKey(uint64 atValue) external {
+    function startSearchKey(uint128 atValue) external {
         searchIterator = tree.startSearchKey(atValue);
         tree.stepSearchKey(searchIterator, 0);
     }
 
-    function startSearchKeyFallbackNotFound(uint64 atValue) external {
+    function startSearchKeyFallbackNotFound(uint128 atValue) external {
         searchIterator = tree.startSearchKey(atValue);
         searchIterator.fallbackIdx = TFHE.asEuint8(0);
         tree.stepSearchKey(searchIterator, 0);
