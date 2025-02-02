@@ -6,7 +6,7 @@ import { ACCOUNT_NAMES } from "./constants";
 type AccountNames = (typeof ACCOUNT_NAMES)[number];
 
 export type Signers = {
-  [K in AccountNames]: HardhatEthersSigner;
+  [K in AccountNames]: HardhatEthersSigner & { accountName?: AccountNames };
 };
 
 const signers: Signers = {} as Signers;
@@ -17,6 +17,7 @@ export const initSigners = async (): Promise<void> => {
     for (let index = 0; index < ACCOUNT_NAMES.length; index++) {
       const name = ACCOUNT_NAMES[index];
       signers[name] = eSigners[index];
+      signers[name].accountName = name;
     }
   }
 };

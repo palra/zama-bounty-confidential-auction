@@ -7,6 +7,7 @@ import "fhevm/config/ZamaFHEVMConfig.sol";
 import "fhevm/config/ZamaGatewayConfig.sol";
 import "fhevm/gateway/GatewayCaller.sol";
 import "fhevm-contracts/contracts/token/ERC20/IConfidentialERC20.sol";
+import "fhevm-contracts/contracts/utils/EncryptedErrors.sol";
 import "@openzeppelin/contracts/access/Ownable2Step.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 import "./lib/HalfEncryptedFenwickTree.sol";
@@ -29,6 +30,7 @@ enum AuctionState {
 struct Bid {
     uint8 price;
     euint64 quantity;
+    euint64 deposit;
     bool tombstone;
 }
 
@@ -38,8 +40,22 @@ contract ConfidentialSPA is
     GatewayCaller,
     TimeLockModifier,
     Ownable2Step,
-    ReentrancyGuardTransient
+    ReentrancyGuardTransient,
+    EncryptedErrors
 {
+    enum ErrorCodes {
+        NO_ERROR,
+        TRANSFER_FAILED,
+        VALIDATION_ERROR
+    }
+
+    struct LastError {
+        uint256 errorIndex;
+        uint256 at;
+    }
+
+    mapping(address => LastError) private lastErrorByAddress;
+
     bytes32 public constant TL_TAG_COMPUTE_CLEARING = keccak256("compute-clearing-price");
     bytes32 public constant TL_TAG_COMPUTE_CLEARING_STEP = keccak256("compute-clearing-price.step");
     bytes32 public constant TL_TAG_PULL_AUCTIONEER = keccak256("pull-auctioneer");
@@ -58,6 +74,10 @@ contract ConfidentialSPA is
     uint64 public immutable MIN_PRICE;
     uint64 public immutable MAX_PRICE;
 
+    euint64 private immutable E_AUCTION_TOKEN_SUPPLY;
+    euint64 private immutable EU64_ZERO;
+    euint8 private immutable EU8_ZERO;
+
     /// @notice When the auction is resolved, the cleartext clearing price will be decrypted and set here.
     uint8 public clearingPriceTick;
 
@@ -66,9 +86,9 @@ contract ConfidentialSPA is
     HalfEncryptedFenwickTree.SearchKeyIterator private _searchIterator;
 
     /// @dev Stores cumulative bid amounts, per index.
-    HalfEncryptedFenwickTree.Storage private priceMap;
+    HalfEncryptedFenwickTree.Storage private priceMap; //! TODO: use euint128 leaf values to prevent overflows
     /// @dev Stores total bid quantity per price range.
-    mapping(uint8 => euint64) private priceToQuantity;
+    mapping(uint8 => euint64) private priceToQuantity; //! TODO: switch to euint128 to reasonably prevent any overflow
     /// @dev Keeps track of base token deposits. Only used for funds recovery on auction cancellation.
     mapping(address => euint64) private addressToBaseTokenDeposit;
     /// @dev Keeps track of individual bids.
@@ -82,6 +102,8 @@ contract ConfidentialSPA is
     event WithdrawalReady(uint8 clearingPriceTick);
     /// @notice Signals readiness for clearing price step search.
     event DecryptClearingPriceNextStepReady();
+    /// @notice Signals a new encrypted error to decrypt.
+    event ErrorChanged(address indexed user, uint256 errorId);
 
     error InvalidConstructorArguments();
     error OutOfOrderDecrypt();
@@ -109,9 +131,11 @@ contract ConfidentialSPA is
         uint256 _auctionEnd,
         uint64 _minPrice,
         uint64 _maxPrice
-    ) Ownable(_auctioneer) {
+    ) Ownable(_auctioneer) EncryptedErrors(uint8(type(ErrorCodes).max)) {
         if (_auctionTokenSupply == 0) revert InvalidConstructorArguments();
         AUCTION_TOKEN_SUPPLY = _auctionTokenSupply;
+        E_AUCTION_TOKEN_SUPPLY = TFHE.asEuint64(_auctionTokenSupply);
+        TFHE.allowThis(E_AUCTION_TOKEN_SUPPLY);
 
         if (_auctionEnd <= block.timestamp) revert InvalidConstructorArguments();
         AUCTION_END = _auctionEnd;
@@ -124,62 +148,92 @@ contract ConfidentialSPA is
         BASE_TOKEN = _baseToken;
 
         priceMap.init();
+
+        EU64_ZERO = TFHE.asEuint64(0);
+        TFHE.allowThis(EU64_ZERO);
     }
 
     function depositAuction() external onlyState(AuctionState.WaitDeposit) onlyOwner {
-        euint64 deposit = TFHE.asEuint64(AUCTION_TOKEN_SUPPLY);
-        TFHE.allowTransient(deposit, address(AUCTION_TOKEN));
-        AUCTION_TOKEN.transferFrom(msg.sender, address(this), deposit);
+        _transferIntoContractWithCheck(msg.sender, E_AUCTION_TOKEN_SUPPLY, AUCTION_TOKEN);
+        // TODO: check for success, decrypt it then change the state in the callback
 
         auctionState = AuctionState.Active;
     }
 
     /// @notice Submit a bid at a given price for an encrypted amount.
     /// @dev Prices are always represented in cleartext. To increase privacy, users are encouraged to submit multiple
-    /// zero-quantity bids at random prices
+    /// zero-quantity bids at random prices.
     /// @param _price Bid price, expressed with 12 decimals.
     /// @param _encryptedQuantity Encrypted bid quantity.
     /// @param _inputProof Encryption proof for encrypted inputs.
     function bid(
-        uint64 _price,
+        uint64 _price, // TODO: take the tick in parameter instead
         einput _encryptedQuantity,
         bytes calldata _inputProof
     ) external onlyState(AuctionState.Active) nonReentrant {
         if (block.timestamp >= AUCTION_END) revert AuctionEnded();
-        // TODO: throw an error if price != indexToPrice(priceToIndex(price))
-        // Ideally, find a way to compute this with gas cost effectiveness in mind.
 
+        // Parse input
         euint64 quantity = TFHE.asEuint64(_encryptedQuantity, _inputProof);
         TFHE.isSenderAllowed(quantity);
-        TFHE.allowThis(quantity);
+
+        // Validate input
+        // `quantity` can't be greater than the auctionned token supply
+        ebool invalidQuantity = TFHE.gt(quantity, AUCTION_TOKEN_SUPPLY);
+        quantity = TFHE.select(invalidQuantity, EU64_ZERO, quantity);
+        euint8 errorCode = _errorDefineIf(invalidQuantity, uint8(ErrorCodes.VALIDATION_ERROR));
 
         uint8 tick = priceToTick(_price);
-        priceMap.update(tick, quantity);
 
+        // Compute deposit in base tokens, based on price.12 * quantity.6
+        // price * quantity must be a valid base token amount
+        euint128 deposit128 = TFHE.div(TFHE.mul(TFHE.asEuint128(quantity), uint128(tickToPrice(tick))), 1e6);
+        ebool depositLargerThanMaxSupply = TFHE.gt(deposit128, BASE_TOKEN.totalSupply());
+        euint64 deposit = TFHE.select(depositLargerThanMaxSupply, EU64_ZERO, TFHE.asEuint64(deposit128));
+        errorCode = _errorChangeIf(depositLargerThanMaxSupply, uint8(ErrorCodes.VALIDATION_ERROR), errorCode);
+
+        ebool success = _transferIntoContractWithCheck(msg.sender, deposit, BASE_TOKEN);
+        deposit = TFHE.select(success, deposit, EU64_ZERO); // If the transfer failed, deposit tracker is set to zero
+        errorCode = _errorChangeIfNot(success, uint8(ErrorCodes.TRANSFER_FAILED), errorCode);
+
+        // Update data structures
+        // If there is an error, perform a no-op
+        quantity = TFHE.select(
+            TFHE.eq(errorCode, EU8_ZERO), // = no errorm
+            quantity,
+            EU64_ZERO
+        );
+        priceMap.update(tick, quantity); //! TODO: switch to euint128
+
+        // Side-effects:
+
+        // - Persist the bid
+        TFHE.allowThis(deposit);
+        TFHE.allowThis(quantity);
+        addressToBids[msg.sender].push(Bid({ price: tick, quantity: quantity, deposit: deposit, tombstone: false }));
+
+        // - Update quantity accumulator at a given tick
         if (!TFHE.isInitialized(priceToQuantity[tick])) {
-            priceToQuantity[tick] = TFHE.asEuint64(0);
+            priceToQuantity[tick] = EU64_ZERO;
         }
+        //! Can overflow if the auction supply is large enough and enough bidders put auctions at the same price range
         priceToQuantity[tick] = TFHE.add(priceToQuantity[tick], quantity);
         TFHE.allowThis(priceToQuantity[tick]);
 
-        euint64 deposit = TFHE.asEuint64(
-            // convert from 12 decimals to 6 decimals
-            // TODO: check for overflow when casting down to euint64
-            TFHE.div(TFHE.mul(TFHE.asEuint128(quantity), uint128(tickToPrice(tick))), 1e6)
-        );
-
+        // - Update address to base token deposit map, in case of auction cancellation
         if (!TFHE.isInitialized(addressToBaseTokenDeposit[msg.sender])) {
-            addressToBaseTokenDeposit[msg.sender] = TFHE.asEuint64(0);
+            addressToBaseTokenDeposit[msg.sender] = EU64_ZERO;
         }
+        //* should not overflow: deposit is checked to be a valid ConfERC20 value, whose totalSupply can't exceed uint64
         addressToBaseTokenDeposit[msg.sender] = TFHE.add(addressToBaseTokenDeposit[msg.sender], deposit);
         TFHE.allowThis(addressToBaseTokenDeposit[msg.sender]);
 
-        TFHE.allowTransient(deposit, address(BASE_TOKEN));
-        BASE_TOKEN.transferFrom(msg.sender, address(this), deposit);
-
-        addressToBids[msg.sender].push(Bid({ price: tick, quantity: quantity, tombstone: false }));
-
+        // - At least one bid has been registered, mark it
         hasBids = true;
+
+        // - Cleanup
+        _setError(errorCode);
+        TFHE.cleanTransientStorage();
     }
 
     /// @notice In case of emergency, cancels the auction and activate recovery functions.
@@ -249,7 +303,6 @@ contract ConfidentialSPA is
         _startTimeLockForDuration(TL_TAG_COMPUTE_CLEARING_STEP, CALLBACK_MAX_DURATION);
     }
 
-    /// @dev Gateway only -
     function callbackWithdrawalDecryptionStep(
         uint256,
         uint8 idx
@@ -260,7 +313,6 @@ contract ConfidentialSPA is
         emit DecryptClearingPriceNextStepReady();
     }
 
-    /// @notice FHE only
     function callbackWithdrawalDecryptionFinal(
         uint256,
         uint8 found
@@ -269,6 +321,11 @@ contract ConfidentialSPA is
         // The clearing price has been found, we'll never need to compute it again. Lock clearing price compute forever.
         _lockForever(TL_TAG_COMPUTE_CLEARING);
         _lockForever(TL_TAG_COMPUTE_CLEARING_STEP);
+
+        if (found == 0) {
+            auctionState = AuctionState.Cancelled;
+            return;
+        }
 
         emit WithdrawalReady(clearingPriceTick);
         auctionState = AuctionState.WithdrawalReady;
@@ -289,16 +346,16 @@ contract ConfidentialSPA is
         // Return non-allocated tokens
         euint64 auctionAllocated = TFHE.min(totalTokens, priceMap.totalValue());
         euint64 auctionToTransfer = TFHE.sub(totalTokens, auctionAllocated);
-        TFHE.allowTransient(auctionToTransfer, address(AUCTION_TOKEN));
-        AUCTION_TOKEN.transfer(auctioneer, auctionToTransfer);
+        _transferTo(auctioneer, auctionToTransfer, AUCTION_TOKEN);
 
         // Pull base tokens
         euint64 baseToTransfer = TFHE.asEuint64(
             // convert from 12 dec. to 6 dec.
             TFHE.div(TFHE.mul(TFHE.asEuint128(auctionAllocated), tickToPrice(clearingPriceTick)), 1e6)
         );
-        TFHE.allowTransient(baseToTransfer, address(BASE_TOKEN));
-        BASE_TOKEN.transfer(auctioneer, baseToTransfer);
+        _transferTo(auctioneer, baseToTransfer, BASE_TOKEN);
+
+        TFHE.cleanTransientStorage();
     }
 
     /// @notice When the auction is resolved, pull funds owed by a given bidde for a specific bid.
@@ -320,47 +377,44 @@ contract ConfidentialSPA is
             revert BidAlreadyPulled();
         }
 
-        euint64 auctionToTransfer = TFHE.asEuint64(0);
-        euint64 baseToTransfer = TFHE.asEuint64(0);
+        euint64 auctionToTransfer = EU64_ZERO;
+        euint64 baseToTransfer = EU64_ZERO;
 
         // No need to obfuscate `if` branches, the price is cleartext anyways.
-        uint128 clearingPrice = uint128(tickToPrice(clearingPriceTick));
 
+        // Comparison order is reversed, because ticks and price orders are inverted for storage purposes.
         if (_bid.price > clearingPriceTick) {
             // Offer rejected, refunding deposit
-            baseToTransfer = TFHE.asEuint64(
-                // convert from 12 dec. to 6 dec.
-                TFHE.div(TFHE.mul(TFHE.asEuint128(_bid.quantity), uint128(tickToPrice(_bid.price))), 1e6)
-            );
-
+            baseToTransfer = _bid.deposit;
             // Saving some gas by deleting the now unused priceToQuantity mapping
             // TODO: check gas refund
-            priceToQuantity[clearingPriceTick] = euint64.wrap(0);
+            priceToQuantity[_bid.price] = euint64.wrap(0);
         } else if (_bid.price < clearingPriceTick) {
             // Offer accepted, below clearing price = entirely fulfilled
+            uint128 clearingPrice = uint128(tickToPrice(clearingPriceTick));
+
             auctionToTransfer = _bid.quantity;
             euint128 eQuantity = TFHE.asEuint128(_bid.quantity);
             // Claring price is lower than the quantity previously secured, refund remaining.
-            baseToTransfer = TFHE.asEuint64(
-                TFHE.div(
-                    TFHE.sub(TFHE.mul(eQuantity, uint128(tickToPrice(_bid.price))), TFHE.mul(eQuantity, clearingPrice)),
-                    1e6
-                )
-            );
+            //* should not overflow: clearingPrice < _bid.price => (_bid.quantity * clearingPrice) / 1e6 < _bid.deposit
+            baseToTransfer = TFHE.sub(_bid.deposit, TFHE.asEuint64(TFHE.div(TFHE.mul(eQuantity, clearingPrice), 1e6)));
 
             // No need to update priceToQuantity: we're guaranteed to never send more than available at that range price
             // because all bids above the clearingPrice are entirely fulfilled.
+
             // Saving some gas by deleting the now unused priceToQuantity mapping
             // TODO: check gas refund
-            priceToQuantity[clearingPriceTick] = euint64.wrap(0);
+            priceToQuantity[_bid.price] = euint64.wrap(0);
         } else {
+            uint128 clearingPrice = uint128(tickToPrice(clearingPriceTick));
             // Offer accepted, at clearing price = at least partially fulfilled
-            euint64 totalTokens = TFHE.asEuint64(AUCTION_TOKEN_SUPPLY);
+            euint64 totalTokens = E_AUCTION_TOKEN_SUPPLY;
 
             // Compute amount of tokens that overflow besides the auction token supply.
+            //* should not underflow: priceMap.query(x) <= priceMap.totalValue() - properties of the Fenwick tree
             euint64 quantityOverAuctionAvailable = TFHE.sub(
-                priceMap.query(clearingPriceTick),
-                TFHE.min(totalTokens, priceMap.totalValue())
+                priceMap.query(clearingPriceTick), // cumulative qty at clearing price
+                TFHE.min(totalTokens, priceMap.totalValue()) // total allocated tokens
             );
 
             // Substract without underflow, capped at 0.
@@ -372,28 +426,25 @@ contract ConfidentialSPA is
 
             // In case of competing bids at the same price, first arrived first served.
             auctionToTransfer = TFHE.min(allocationAtPrice, _bid.quantity);
+            //* should not overflow/underflow: auctionToTransfer <= _bid.quantity and _bid.quantity * _bid.price is
+            //* known to be <= than uint64.max, checked in bid()
             baseToTransfer = TFHE.asEuint64(
-                TFHE.div(
-                    TFHE.sub(
-                        TFHE.mul(TFHE.asEuint128(_bid.quantity), clearingPrice),
-                        TFHE.mul(TFHE.asEuint128(auctionToTransfer), clearingPrice)
-                    ),
-                    1e6
-                )
+                TFHE.div(TFHE.mul(TFHE.sub(TFHE.asEuint128(_bid.quantity), auctionToTransfer), clearingPrice), 1e6)
             );
 
             // Make sure future pulls at the same price tick will not compute available funds based on already withdrawn
             // funds.
+            //* should not underflow: auctionToTransfer <= allocationAtPrice <= priceToQuantity[clearingPriceTick]
             priceToQuantity[clearingPriceTick] = TFHE.sub(priceToQuantity[clearingPriceTick], auctionToTransfer);
             TFHE.allowThis(priceToQuantity[clearingPriceTick]);
         }
 
         _bid.tombstone = true;
 
-        TFHE.allowTransient(auctionToTransfer, address(AUCTION_TOKEN));
-        AUCTION_TOKEN.transfer(_bidder, auctionToTransfer);
-        TFHE.allowTransient(baseToTransfer, address(BASE_TOKEN));
-        BASE_TOKEN.transfer(_bidder, baseToTransfer);
+        _transferTo(_bidder, auctionToTransfer, AUCTION_TOKEN);
+        _transferTo(_bidder, baseToTransfer, BASE_TOKEN);
+
+        TFHE.cleanTransientStorage();
     }
 
     /// @notice When in recover state, recover funds sent by the auctioneer.
@@ -405,8 +456,9 @@ contract ConfidentialSPA is
         _lockForever(TL_TAG_RECOVER_AUCTIONEER);
 
         euint64 auctionToTransfer = TFHE.asEuint64(AUCTION_TOKEN_SUPPLY);
-        TFHE.allowTransient(auctionToTransfer, address(AUCTION_TOKEN));
-        AUCTION_TOKEN.transfer(owner(), auctionToTransfer);
+        _transferTo(owner(), auctionToTransfer, AUCTION_TOKEN);
+
+        TFHE.cleanTransientStorage();
     }
 
     /// @notice When in recover state, recover funds sent by the specified bidder.
@@ -419,8 +471,9 @@ contract ConfidentialSPA is
         euint64 baseToTransfer = TFHE.isInitialized(addressToBaseTokenDeposit[_bidder])
             ? addressToBaseTokenDeposit[_bidder]
             : TFHE.asEuint64(0);
-        TFHE.allowTransient(baseToTransfer, address(BASE_TOKEN));
-        BASE_TOKEN.transfer(_bidder, baseToTransfer);
+        _transferTo(_bidder, baseToTransfer, BASE_TOKEN);
+
+        TFHE.cleanTransientStorage();
     }
 
     // Price transformation
@@ -444,5 +497,49 @@ contract ConfidentialSPA is
 
         uint64 ratio = ((tick - 1) * (MAX_PRICE - MIN_PRICE)) / (type(uint8).max);
         return MAX_PRICE - ratio;
+    }
+
+    // Encrypted transfer utils
+
+    function _transferIntoContractWithCheck(
+        address _from,
+        euint64 _amount,
+        IConfidentialERC20 _token
+    ) internal returns (ebool success) {
+        euint64 balanceBefore = _token.balanceOf(address(this));
+        if (!TFHE.isInitialized(balanceBefore)) {
+            balanceBefore = TFHE.asEuint64(0);
+        }
+
+        TFHE.allowTransient(_amount, address(_token));
+        _token.transferFrom(_from, address(this), _amount);
+        success = TFHE.or(TFHE.eq(_amount, 0), TFHE.ne(balanceBefore, _token.balanceOf(address(this))));
+    }
+
+    function _transferTo(address _to, euint64 _amount, IConfidentialERC20 _token) internal {
+        TFHE.allowTransient(_amount, address(_token));
+        _token.transfer(_to, _amount);
+    }
+
+    // Error handling
+
+    /// @notice Reads the last encrypted error for the caller.
+    /// @return errorCode The encrypted error code.
+    /// @return at The timestamp at which the error was raised.
+    function getLastEncryptedError() external view returns (euint8 errorCode, uint256 at) {
+        LastError storage err = lastErrorByAddress[msg.sender];
+        errorCode = _errorGetCodeEmitted(err.errorIndex);
+        at = err.at;
+    }
+
+    function getEncryptedErrorIndex(uint256 errorIndex) external view returns (euint8 errorCode) {
+        return _errorGetCodeEmitted(errorIndex);
+    }
+
+    function _setError(euint8 errorCode) private {
+        TFHE.allow(errorCode, msg.sender);
+        uint256 errorIndex = _errorSave(errorCode);
+        lastErrorByAddress[msg.sender] = LastError({ errorIndex: _errorSave(errorCode), at: block.timestamp });
+        emit ErrorChanged(msg.sender, errorIndex);
     }
 }
