@@ -13,21 +13,21 @@ contract MockHEFTImpl is SepoliaZamaFHEVMConfig, SepoliaZamaGatewayConfig, Gatew
 
     HalfEncryptedFenwickTree.Storage tree;
 
-    event Found(uint8);
+    event Found(uint16);
     event Total(uint128);
 
     constructor() {
         tree.init();
     }
 
-    function update(uint8 key, einput encryptedQuantity, bytes calldata inputProof) external {
+    function update(uint16 key, einput encryptedQuantity, bytes calldata inputProof) external {
         euint128 quantity = TFHE.asEuint128(encryptedQuantity, inputProof);
         tree.update(key, quantity);
     }
 
     euint128 public queryResult;
 
-    function queryKey(uint8 key) external returns (euint128) {
+    function queryKey(uint16 key) external returns (euint128) {
         queryResult = tree.query(key);
         return queryResult;
     }
@@ -36,7 +36,7 @@ contract MockHEFTImpl is SepoliaZamaFHEVMConfig, SepoliaZamaGatewayConfig, Gatew
         return tree.totalValue();
     }
 
-    function peekTreeAtKey(uint8 key) public view returns (euint128) {
+    function peekTreeAtKey(uint16 key) public view returns (euint128) {
         return tree.tree[key];
     }
 
@@ -53,7 +53,7 @@ contract MockHEFTImpl is SepoliaZamaFHEVMConfig, SepoliaZamaGatewayConfig, Gatew
 
     function startSearchKeyFallbackNotFound(uint128 atValue) external {
         searchIterator = tree.startSearchKey(atValue);
-        searchIterator.fallbackIdx = TFHE.asEuint8(0);
+        searchIterator.fallbackIdx = TFHE.asEuint16(0);
         tree.stepSearchKey(searchIterator, 0);
     }
 
@@ -63,11 +63,11 @@ contract MockHEFTImpl is SepoliaZamaFHEVMConfig, SepoliaZamaGatewayConfig, Gatew
         Gateway.requestDecryption(cts, this.callbackSearchKeyStep.selector, 0, block.timestamp + 100, false);
     }
 
-    function callbackSearchKeyStep(uint256, uint8 idx) public onlyGateway {
+    function callbackSearchKeyStep(uint256, uint16 idx) public onlyGateway {
         tree.stepSearchKey(searchIterator, idx);
     }
 
-    function searchResult() external view returns (euint8) {
+    function searchResult() external view returns (euint16) {
         return searchIterator.foundIdx;
     }
 }

@@ -173,8 +173,8 @@ describe("Confidential FenwickTree", () => {
     expect(await balanceOf(signers.carol.address, tokenBase)).to.equal(1_000_000_000n - parseAmount("4.8"));
 
     await (await bid(parsePrice("0.00000000001"), 1_000_000, signers.dave)).wait();
-    expect(await contract.tickToPrice(await contract.priceToTick(parsePrice("0.00000000001")))).to.equal(39216n);
-    expect(await balanceOf(signers.dave.address, tokenBase)).to.equal(1_000_000_000n - parseAmount("0.039216"));
+    expect(await contract.tickToPrice(await contract.priceToTick(parsePrice("0.00000000001")))).to.equal(153n);
+    expect(await balanceOf(signers.dave.address, tokenBase)).to.equal(1_000_000_000n - parseAmount("0.000153"));
 
     await time.increase(BID_DURATION);
 

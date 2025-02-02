@@ -54,7 +54,7 @@ describe("Half-Confidential FenwickTree", () => {
 
     // console.groupEnd();
 
-    return await debug.decrypt8(await contract.searchResult());
+    return await debug.decrypt16(await contract.searchResult());
   }
 
   const searchKey = (key: BigNumberish) => _searchKey(key, contract.startSearchKey);

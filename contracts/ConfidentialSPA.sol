@@ -28,7 +28,7 @@ enum AuctionState {
 }
 
 struct Bid {
-    uint8 price;
+    uint16 price;
     euint64 quantity;
     euint64 deposit;
     bool tombstone;
@@ -77,10 +77,10 @@ contract ConfidentialSPA is
     euint64 private immutable E_AUCTION_TOKEN_SUPPLY;
     euint128 private immutable EU128_ZERO;
     euint64 private immutable EU64_ZERO;
-    euint8 private immutable EU8_ZERO;
+    euint16 private immutable EU16_ZERO;
 
     /// @notice When the auction is resolved, the cleartext clearing price will be decrypted and set here.
-    uint8 public clearingPriceTick;
+    uint16 public clearingPriceTick;
 
     /// @dev When performing the decryption of the clearing price, this is the iterator that will store search state
     /// across successive async decryptions.
@@ -89,7 +89,7 @@ contract ConfidentialSPA is
     /// @dev Stores cumulative bid amounts, per index.
     HalfEncryptedFenwickTree.Storage private priceMap;
     /// @dev Stores total bid quantity per price range.
-    mapping(uint8 => euint128) private priceToQuantity;
+    mapping(uint16 => euint128) private priceToQuantity;
     /// @dev Keeps track of base token deposits. Only used for funds recovery on auction cancellation.
     mapping(address => euint64) private addressToBaseTokenDeposit;
     /// @dev Keeps track of individual bids.
@@ -100,7 +100,7 @@ contract ConfidentialSPA is
     AuctionState public auctionState = AuctionState.WaitDeposit;
 
     /// @notice Signals that withdrawal is ready.
-    event WithdrawalReady(uint8 clearingPriceTick);
+    event WithdrawalReady(uint16 clearingPriceTick);
     /// @notice Signals readiness for clearing price step search.
     event DecryptClearingPriceNextStepReady();
     /// @notice Signals a new encrypted error to decrypt.
@@ -154,8 +154,8 @@ contract ConfidentialSPA is
         TFHE.allowThis(EU128_ZERO);
         EU64_ZERO = TFHE.asEuint64(0);
         TFHE.allowThis(EU64_ZERO);
-        EU8_ZERO = TFHE.asEuint8(0);
-        TFHE.allowThis(EU8_ZERO);
+        EU16_ZERO = TFHE.asEuint16(0);
+        TFHE.allowThis(EU16_ZERO);
     }
 
     function depositAuction() external onlyState(AuctionState.WaitDeposit) onlyOwner {
@@ -188,7 +188,7 @@ contract ConfidentialSPA is
         quantity = TFHE.select(invalidQuantity, EU64_ZERO, quantity);
         euint8 errorCode = _errorDefineIf(invalidQuantity, uint8(ErrorCodes.VALIDATION_ERROR));
 
-        uint8 tick = priceToTick(_price);
+        uint16 tick = priceToTick(_price);
 
         // Compute deposit in base tokens, based on price.12 * quantity.6
         // price * quantity must be a valid base token amount
@@ -204,7 +204,7 @@ contract ConfidentialSPA is
         // Update data structures
         // If there is an error, perform a no-op
         quantity = TFHE.select(
-            TFHE.eq(errorCode, EU8_ZERO), // = no errorm
+            TFHE.eq(errorCode, EU16_ZERO), // = no errorm
             quantity,
             EU64_ZERO
         );
@@ -311,7 +311,7 @@ contract ConfidentialSPA is
 
     function callbackWithdrawalDecryptionStep(
         uint256,
-        uint8 idx
+        uint16 idx
     ) external onlyState(AuctionState.WithdrawalPending) onlyGateway {
         priceMap.stepSearchKey(_searchIterator, idx);
         // Release the lock on the step trigger, so we can call it again.
@@ -321,7 +321,7 @@ contract ConfidentialSPA is
 
     function callbackWithdrawalDecryptionFinal(
         uint256,
-        uint8 found
+        uint16 found
     ) external onlyState(AuctionState.WithdrawalPending) onlyGateway {
         clearingPriceTick = found;
         // The clearing price has been found, we'll never need to compute it again. Lock clearing price compute forever.
@@ -486,24 +486,24 @@ contract ConfidentialSPA is
 
     // Price transformation
 
-    /// @dev Transforms a price in the interval [MIN_PRICE, MAX_PRICE) to a uint8 in the interval [255, 0). Performs a
+    /// @dev Transforms a price in the interval [MIN_PRICE, MAX_PRICE) to a uint16 in the interval [255, 0). Performs a
     /// linear interpolation, which is not ideal for financial applications.
     /// @param price The price to transform.
-    /// @return The transformed price as a uint8 tick.
-    function priceToTick(uint64 price) public view returns (uint8) {
+    /// @return The transformed price as a uint16 tick.
+    function priceToTick(uint64 price) public view returns (uint16) {
         if (price <= MIN_PRICE || price > MAX_PRICE) revert OutOfBounds();
 
-        uint64 ratio = ((MAX_PRICE - price) * (type(uint8).max)) / (MAX_PRICE - MIN_PRICE);
-        return uint8(ratio + 1);
+        uint64 ratio = ((MAX_PRICE - price) * (type(uint16).max)) / (MAX_PRICE - MIN_PRICE);
+        return uint16(ratio + 1);
     }
 
-    /// @dev Transforms a uint8 in the interval [255, 0) back to a price in the interval [MIN_PRICE, MAX_PRICE).
-    /// @param tick The uint8 to transform back.
+    /// @dev Transforms a uint16 in the interval [255, 0) back to a price in the interval [MIN_PRICE, MAX_PRICE).
+    /// @param tick The uint16 to transform back.
     /// @return The transformed price as a uint256.
-    function tickToPrice(uint8 tick) public view returns (uint64) {
+    function tickToPrice(uint16 tick) public view returns (uint64) {
         if (tick == 0) revert OutOfBounds();
 
-        uint64 ratio = ((tick - 1) * (MAX_PRICE - MIN_PRICE)) / (type(uint8).max);
+        uint64 ratio = ((tick - 1) * (MAX_PRICE - MIN_PRICE)) / (type(uint16).max);
         return MAX_PRICE - ratio;
     }
 

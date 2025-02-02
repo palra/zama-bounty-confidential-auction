@@ -4,13 +4,13 @@ pragma solidity ^0.8.24;
 
 import "fhevm/lib/TFHE.sol";
 
-uint8 constant TREE_SIZE = type(uint8).max;
-uint8 constant TREE_SIZE_LOG2 = 7; // floor(log2(type(uint8).max))
+uint16 constant TREE_SIZE = type(uint16).max;
+uint16 constant TREE_SIZE_LOG2 = 16 - 1; // floor(log2(type(uint16).max))
 
 /// @notice Returns the least significant bit (LSB) of a given unsigned 8-bit integer.
 /// @param x The unsigned 8-bit integer.
 /// @return The least significant bit of x.
-function lsb(uint8 x) pure returns (uint8) {
+function lsb(uint16 x) pure returns (uint16) {
     unchecked {
         return x & (~x + 1);
     }
@@ -29,16 +29,16 @@ library HalfEncryptedFenwickTree {
     error FT_InvalidPriceRange();
 
     struct Storage {
-        /// Fixed-size array of size `type(uint8).max`. Stores `type(uint8).max - 1` keys.
+        /// Fixed-size array of size `type(uint16).max`. Stores `type(uint16).max - 1` keys.
         /// Using 1-indexed arrays for convenience working with `lsb`.
         /// We reserve index `0` to store the total cumulative quantity. Hence, `0` is not a valid key.
-        mapping(uint8 => euint128) tree;
+        mapping(uint16 => euint128) tree;
         /// Keeps track of the largest insertedValue. This one is encrypted
-        euint8 largestIndex;
+        euint16 largestIndex;
     }
 
     function init(Storage storage _this) internal {
-        _this.largestIndex = TFHE.asEuint8(0);
+        _this.largestIndex = TFHE.asEuint16(0);
         TFHE.allowThis(_this.largestIndex);
         _this.tree[0] = TFHE.asEuint128(0);
         TFHE.allowThis(_this.tree[0]);
@@ -47,17 +47,17 @@ library HalfEncryptedFenwickTree {
     /// @notice Increments the cumulative quantity stored at a given index.
     /// @dev Preserves properties of the Fenwick tree. For increased privacy, consider multiple `0` quantity updates at
     /// random keys.
-    function update(Storage storage _this, uint8 atKey, euint128 quantity) internal {
+    function update(Storage storage _this, uint16 atKey, euint128 quantity) internal {
         if (atKey == 0) revert FT_InvalidPriceRange();
 
         _this.largestIndex = TFHE.select(
             TFHE.eq(quantity, 0),
             _this.largestIndex,
-            TFHE.select(TFHE.gt(atKey, _this.largestIndex), TFHE.asEuint8(atKey), _this.largestIndex)
+            TFHE.select(TFHE.gt(atKey, _this.largestIndex), TFHE.asEuint16(atKey), _this.largestIndex)
         );
         TFHE.allowThis(_this.largestIndex);
 
-        uint8 index = atKey;
+        uint16 index = atKey;
 
         // 2) ... then detect it, as we're only moving forward.
         while (index >= atKey) {
@@ -75,11 +75,11 @@ library HalfEncryptedFenwickTree {
     }
 
     /// @notice Queries the cumulative quantity at a given index.
-    function query(Storage storage _this, uint8 atKey) internal returns (euint128) {
+    function query(Storage storage _this, uint16 atKey) internal returns (euint128) {
         if (atKey == 0) revert FT_InvalidPriceRange();
 
         euint128 sum = TFHE.asEuint128(0);
-        uint8 idx = atKey;
+        uint16 idx = atKey;
 
         // We're guaranteed that decrementing by lsb will eventually reach 0.
         while (idx != 0) {
@@ -98,11 +98,11 @@ library HalfEncryptedFenwickTree {
     /// left to the calling contract.
     struct SearchKeyIterator {
         euint128 rank;
-        euint8 fallbackIdx;
+        euint16 fallbackIdx;
         /// When unset, means the search is not running.
-        euint8 idx;
+        euint16 idx;
         /// When set, marks the end of the search.
-        euint8 foundIdx;
+        euint16 foundIdx;
     }
 
     /// @notice Initializes the search key iterator, answering the query "what is the first index at which the
@@ -110,21 +110,21 @@ library HalfEncryptedFenwickTree {
     /// resolve to the largest index.
     /// @dev In the context of the single-price auction, we will need to fallback to the latest index to make sure
     /// that auctions that did not fulfilled the entirety of the distributed tokens will still point to the clearing
-    /// price. This behavior can be changed if needed, for instance setting `fallbackIdx` to `TFHE.asEuint8(0)` can be
+    /// price. This behavior can be changed if needed, for instance setting `fallbackIdx` to `TFHE.asEuint16(0)` can be
     /// used to mark a "not found" index.
     function startSearchKey(Storage storage _this, uint128 targetQuantity) internal returns (SearchKeyIterator memory) {
         SearchKeyIterator memory it;
         it.rank = TFHE.asEuint128(targetQuantity);
         TFHE.allowThis(it.rank);
         it.fallbackIdx = _this.largestIndex;
-        it.idx = TFHE.asEuint8(0);
+        it.idx = TFHE.asEuint16(0);
         TFHE.allowThis(it.idx);
-        it.foundIdx = euint8.wrap(0);
+        it.foundIdx = euint16.wrap(0);
 
         return it;
     }
 
-    function stepSearchKey(Storage storage _this, SearchKeyIterator storage it, uint8 idx) internal {
+    function stepSearchKey(Storage storage _this, SearchKeyIterator storage it, uint16 idx) internal {
         // If already at the end of the search, stop
         if (TFHE.isInitialized(it.foundIdx)) {
             return;
@@ -132,21 +132,21 @@ library HalfEncryptedFenwickTree {
 
         // If the search just starts, initialize with the root index.
         if (idx == 0) {
-            idx = uint8(1 << TREE_SIZE_LOG2);
+            idx = uint16(1 << TREE_SIZE_LOG2);
         }
 
         ebool isRankLteTreeIdx = TFHE.le(it.rank, _this.tree[idx]);
         if (lsb(idx) == 1) {
-            it.foundIdx = TFHE.select(isRankLteTreeIdx, TFHE.asEuint8(idx), it.fallbackIdx);
+            it.foundIdx = TFHE.select(isRankLteTreeIdx, TFHE.asEuint16(idx), it.fallbackIdx);
             TFHE.allowThis(it.foundIdx);
-            it.idx = euint8.wrap(0);
+            it.idx = euint16.wrap(0);
 
             return;
         }
 
-        euint8 lsbDiv2 = TFHE.asEuint8(lsb(idx) >> 1);
+        euint16 lsbDiv2 = TFHE.asEuint16(lsb(idx) >> 1);
 
-        it.fallbackIdx = TFHE.select(isRankLteTreeIdx, TFHE.asEuint8(idx), it.fallbackIdx);
+        it.fallbackIdx = TFHE.select(isRankLteTreeIdx, TFHE.asEuint16(idx), it.fallbackIdx);
         TFHE.allowThis(it.fallbackIdx);
         it.rank = TFHE.select(isRankLteTreeIdx, it.rank, TFHE.sub(it.rank, _this.tree[idx]));
         TFHE.allowThis(it.rank);
