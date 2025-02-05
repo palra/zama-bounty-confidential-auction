@@ -22,16 +22,16 @@ stateDiagram-v2
 
     state Withdrawal {
 
-      [*] -->  ClearingPrice
-      state ClearingPrice {
-        state ClearingPrice_IsFinished <<choice>>
-        [*] --> ClearingPriceComputing
-        ClearingPriceComputing --> ClearingPriceDecrypt: stepCompute()
-        ClearingPriceDecrypt --> ClearingPrice_IsFinished: _wait decryption - set clearingPrice_
-          ClearingPrice_IsFinished --> [*]: _clearingPrice is defined_
-        ClearingPrice_IsFinished --> ClearingPriceComputing : _else_
+      [*] -->  SettlementPrice
+      state SettlementPrice {
+        state SettlementPrice_IsFinished <<choice>>
+        [*] --> SettlementPriceComputing
+        SettlementPriceComputing --> SettlementPriceDecrypt: stepCompute()
+        SettlementPriceDecrypt --> SettlementPrice_IsFinished: _wait decryption - set settlementPrice_
+          SettlementPrice_IsFinished --> [*]: _settlementPrice is defined_
+        SettlementPrice_IsFinished --> SettlementPriceComputing : _else_
       }
-      ClearingPrice --> WithdrawalReady
+      SettlementPrice --> WithdrawalReady
 
       state WithdrawalReady {
         [*] --> AuctioneerWaiting

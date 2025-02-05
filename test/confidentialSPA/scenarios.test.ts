@@ -180,7 +180,7 @@ describe("Confidential FenwickTree", () => {
 
     await withdrawalDecrypt();
 
-    expect(await contract.clearingPriceTick()).to.equal(await contract.priceToTick(parsePrice("0.000002")));
+    expect(await contract.settlementPriceTick()).to.equal(await contract.priceToTick(parsePrice("0.000002")));
 
     await (await contract.connect(signers.alice).pullAuctioneer()).wait();
     for (const signer of [signers.bob, signers.carol, signers.dave]) {
@@ -202,7 +202,7 @@ describe("Confidential FenwickTree", () => {
   });
 
   describe("multiple bids at the same price", () => {
-    it("should resolve - greater than the clearing price", async () => {
+    it("should resolve - greater than the settlement price", async () => {
       await contract.connect(signers.alice).depositAuction();
 
       await (await bid(parsePrice("0.000008"), 400_000, signers.bob)).wait();
@@ -213,7 +213,7 @@ describe("Confidential FenwickTree", () => {
 
       await withdrawalDecrypt();
 
-      expect(await contract.clearingPriceTick()).to.equal(await contract.priceToTick(parsePrice("0.000002")));
+      expect(await contract.settlementPriceTick()).to.equal(await contract.priceToTick(parsePrice("0.000002")));
 
       await (await contract.connect(signers.alice).pullAuctioneer()).wait();
       for (const signer of [signers.bob, signers.carol, signers.dave]) {
@@ -234,7 +234,7 @@ describe("Confidential FenwickTree", () => {
       }
     });
 
-    it("should resolve - at the clearing price, compete for first", async () => {
+    it("should resolve - at the settlement price, compete for first", async () => {
       await contract.connect(signers.alice).depositAuction();
 
       await (await bid(parsePrice("0.000002"), 400_000, signers.bob)).wait();
@@ -245,7 +245,7 @@ describe("Confidential FenwickTree", () => {
 
       await withdrawalDecrypt();
 
-      expect(await contract.clearingPriceTick()).to.equal(await contract.priceToTick(parsePrice("0.000002")));
+      expect(await contract.settlementPriceTick()).to.equal(await contract.priceToTick(parsePrice("0.000002")));
 
       await (await contract.connect(signers.alice).pullAuctioneer()).wait();
 
@@ -280,7 +280,7 @@ describe("Confidential FenwickTree", () => {
 
       await withdrawalDecrypt();
 
-      expect(await contract.clearingPriceTick()).to.equal(await contract.priceToTick(parsePrice("0.000002")));
+      expect(await contract.settlementPriceTick()).to.equal(await contract.priceToTick(parsePrice("0.000002")));
 
       await (await contract.connect(signers.alice).pullAuctioneer()).wait();
 

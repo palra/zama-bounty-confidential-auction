@@ -56,8 +56,8 @@ contract ConfidentialSPA is
 
     mapping(address => LastError) private lastErrorByAddress;
 
-    bytes32 public constant TL_TAG_COMPUTE_CLEARING = keccak256("compute-clearing-price");
-    bytes32 public constant TL_TAG_COMPUTE_CLEARING_STEP = keccak256("compute-clearing-price.step");
+    bytes32 public constant TL_TAG_COMPUTE_SETTLEMENT = keccak256("compute-settlement-price");
+    bytes32 public constant TL_TAG_COMPUTE_SETTLEMENT_STEP = keccak256("compute-settlement-price.step");
     bytes32 public constant TL_TAG_PULL_AUCTIONEER = keccak256("pull-auctioneer");
     bytes32 public constant TL_TAG_RECOVER_AUCTIONEER = keccak256("recover-auctioneer");
 
@@ -79,10 +79,10 @@ contract ConfidentialSPA is
     euint64 private immutable EU64_ZERO;
     euint16 private immutable EU16_ZERO;
 
-    /// @notice When the auction is resolved, the cleartext clearing price will be decrypted and set here.
-    uint16 public clearingPriceTick;
+    /// @notice When the auction is resolved, the cleartext settlement price will be decrypted and set here.
+    uint16 public settlementPriceTick;
 
-    /// @dev When performing the decryption of the clearing price, this is the iterator that will store search state
+    /// @dev When performing the decryption of the settlement price, this is the iterator that will store search state
     /// across successive async decryptions.
     HalfEncryptedFenwickTree.SearchKeyIterator private _searchIterator;
 
@@ -100,9 +100,9 @@ contract ConfidentialSPA is
     AuctionState public auctionState = AuctionState.WaitDeposit;
 
     /// @notice Signals that withdrawal is ready.
-    event WithdrawalReady(uint16 clearingPriceTick);
-    /// @notice Signals readiness for clearing price step search.
-    event DecryptClearingPriceNextStepReady();
+    event WithdrawalReady(uint16 settlementPriceTick);
+    /// @notice Signals readiness for settlement price step search.
+    event DecryptSettlementPriceNextStepReady();
     /// @notice Signals a new encrypted error to decrypt.
     event ErrorChanged(address indexed user, uint256 errorId);
 
@@ -259,11 +259,11 @@ contract ConfidentialSPA is
     function startWithdrawalDecryption()
         external
         onlyState(AuctionState.Active)
-        checkTimeLockTag(TL_TAG_COMPUTE_CLEARING)
+        checkTimeLockTag(TL_TAG_COMPUTE_SETTLEMENT)
     {
         if (block.timestamp < AUCTION_END) revert NotInRequiredState();
 
-        // No bids, no clearing price. Goto Cancelled state to allow recovery of funds.
+        // No bids, no settlement price. Goto Cancelled state to allow recovery of funds.
         if (!hasBids) {
             auctionState = AuctionState.Cancelled;
             return;
@@ -276,7 +276,7 @@ contract ConfidentialSPA is
 
         // Prevent any restart of the computation during the estimated maximum duration of the whole process.
         _startTimeLockForDuration(
-            TL_TAG_COMPUTE_CLEARING_STEP,
+            TL_TAG_COMPUTE_SETTLEMENT_STEP,
             CALLBACK_MAX_DURATION * CALLBACK_MAX_ITERATIONS + DURATION_BETWEEN_STEPS * CALLBACK_MAX_ITERATIONS
         );
     }
@@ -292,7 +292,7 @@ contract ConfidentialSPA is
     function stepWithdrawalDecryption()
         external
         onlyState(AuctionState.WithdrawalPending)
-        checkTimeLockTag(TL_TAG_COMPUTE_CLEARING_STEP)
+        checkTimeLockTag(TL_TAG_COMPUTE_SETTLEMENT_STEP)
     {
         uint256[] memory cts = new uint256[](1);
         bytes4 selector;
@@ -306,7 +306,7 @@ contract ConfidentialSPA is
 
         Gateway.requestDecryption(cts, selector, 0, block.timestamp + CALLBACK_MAX_DURATION, false);
         // Prevent any decryption while we're waiting for the Gateway.
-        _startTimeLockForDuration(TL_TAG_COMPUTE_CLEARING_STEP, CALLBACK_MAX_DURATION);
+        _startTimeLockForDuration(TL_TAG_COMPUTE_SETTLEMENT_STEP, CALLBACK_MAX_DURATION);
     }
 
     function callbackWithdrawalDecryptionStep(
@@ -315,25 +315,25 @@ contract ConfidentialSPA is
     ) external onlyState(AuctionState.WithdrawalPending) onlyGateway {
         priceMap.stepSearchKey(_searchIterator, idx);
         // Release the lock on the step trigger, so we can call it again.
-        _clearLock(TL_TAG_COMPUTE_CLEARING_STEP);
-        emit DecryptClearingPriceNextStepReady();
+        _clearLock(TL_TAG_COMPUTE_SETTLEMENT_STEP);
+        emit DecryptSettlementPriceNextStepReady();
     }
 
     function callbackWithdrawalDecryptionFinal(
         uint256,
         uint16 found
     ) external onlyState(AuctionState.WithdrawalPending) onlyGateway {
-        clearingPriceTick = found;
-        // The clearing price has been found, we'll never need to compute it again. Lock clearing price compute forever.
-        _lockForever(TL_TAG_COMPUTE_CLEARING);
-        _lockForever(TL_TAG_COMPUTE_CLEARING_STEP);
+        settlementPriceTick = found;
+        // The settlement price has been found, we'll never need to compute it again. Lock settlement price compute forever.
+        _lockForever(TL_TAG_COMPUTE_SETTLEMENT);
+        _lockForever(TL_TAG_COMPUTE_SETTLEMENT_STEP);
 
         if (found == 0) {
             auctionState = AuctionState.Cancelled;
             return;
         }
 
-        emit WithdrawalReady(clearingPriceTick);
+        emit WithdrawalReady(settlementPriceTick);
         auctionState = AuctionState.WithdrawalReady;
     }
 
@@ -358,7 +358,7 @@ contract ConfidentialSPA is
         // Pull base tokens
         euint64 baseToTransfer = TFHE.asEuint64(
             // convert from 12 dec. to 6 dec.
-            TFHE.div(TFHE.mul(TFHE.asEuint128(auctionAllocated), tickToPrice(clearingPriceTick)), 1e6)
+            TFHE.div(TFHE.mul(TFHE.asEuint128(auctionAllocated), tickToPrice(settlementPriceTick)), 1e6)
         );
         _transferTo(auctioneer, baseToTransfer, BASE_TOKEN);
 
@@ -390,45 +390,48 @@ contract ConfidentialSPA is
         // No need to obfuscate `if` branches, the price is cleartext anyways.
 
         // Comparison order is reversed, because ticks and price orders are inverted for storage purposes.
-        if (_bid.price > clearingPriceTick) {
+        if (_bid.price > settlementPriceTick) {
             // Offer rejected, refunding deposit
             baseToTransfer = _bid.deposit;
             // Saving some gas by deleting the now unused priceToQuantity mapping
             // TODO: check gas refund
             priceToQuantity[_bid.price] = euint128.wrap(0);
-        } else if (_bid.price < clearingPriceTick) {
-            // Offer accepted, below clearing price = entirely fulfilled
-            uint128 clearingPrice = uint128(tickToPrice(clearingPriceTick));
+        } else if (_bid.price < settlementPriceTick) {
+            // Offer accepted, below settlement price = entirely fulfilled
+            uint128 settlementPrice = uint128(tickToPrice(settlementPriceTick));
 
             auctionToTransfer = _bid.quantity;
             euint128 eQuantity = TFHE.asEuint128(_bid.quantity);
             // Claring price is lower than the quantity previously secured, refund remaining.
-            //* should not overflow: clearingPrice < _bid.price => (_bid.quantity * clearingPrice) / 1e6 < _bid.deposit
-            baseToTransfer = TFHE.sub(_bid.deposit, TFHE.asEuint64(TFHE.div(TFHE.mul(eQuantity, clearingPrice), 1e6)));
+            //* should not overflow: settlementPrice < _bid.price => (_bid.quantity * settlementPrice) / 1e6 < _bid.deposit
+            baseToTransfer = TFHE.sub(
+                _bid.deposit,
+                TFHE.asEuint64(TFHE.div(TFHE.mul(eQuantity, settlementPrice), 1e6))
+            );
 
             // No need to update priceToQuantity: we're guaranteed to never send more than available at that range price
-            // because all bids above the clearingPrice are entirely fulfilled.
+            // because all bids above the settlementPrice are entirely fulfilled.
 
             // Saving some gas by deleting the now unused priceToQuantity mapping
             // TODO: check gas refund
             priceToQuantity[_bid.price] = euint128.wrap(0);
         } else {
-            uint128 clearingPrice = uint128(tickToPrice(clearingPriceTick));
-            // Offer accepted, at clearing price = at least partially fulfilled
+            uint128 settlementPrice = uint128(tickToPrice(settlementPriceTick));
+            // Offer accepted, at settlement price = at least partially fulfilled
             euint64 totalTokens = E_AUCTION_TOKEN_SUPPLY;
 
             // Compute amount of tokens that overflow besides the auction token supply.
             //* should not underflow: priceMap.query(x) <= priceMap.totalValue() - properties of the Fenwick tree
             euint128 quantityOverAuctionAvailable = TFHE.sub(
-                priceMap.query(clearingPriceTick), // cumulative qty at clearing price
+                priceMap.query(settlementPriceTick), // cumulative qty at settlement price
                 TFHE.min(totalTokens, priceMap.totalValue()) // total allocated tokens
             );
 
             // Substract without underflow, clamp at 0.
             euint64 allocationAtPrice = TFHE.select(
-                TFHE.ge(priceToQuantity[clearingPriceTick], quantityOverAuctionAvailable),
+                TFHE.ge(priceToQuantity[settlementPriceTick], quantityOverAuctionAvailable),
                 //* should not overflow: TOOD: prove it ._.
-                TFHE.asEuint64(TFHE.sub(priceToQuantity[clearingPriceTick], quantityOverAuctionAvailable)),
+                TFHE.asEuint64(TFHE.sub(priceToQuantity[settlementPriceTick], quantityOverAuctionAvailable)),
                 EU64_ZERO
             );
 
@@ -437,14 +440,14 @@ contract ConfidentialSPA is
             //* should not overflow/underflow: auctionToTransfer <= _bid.quantity and _bid.quantity * _bid.price is
             //* known to be <= than uint64.max, checked in bid()
             baseToTransfer = TFHE.asEuint64(
-                TFHE.div(TFHE.mul(TFHE.sub(TFHE.asEuint128(_bid.quantity), auctionToTransfer), clearingPrice), 1e6)
+                TFHE.div(TFHE.mul(TFHE.sub(TFHE.asEuint128(_bid.quantity), auctionToTransfer), settlementPrice), 1e6)
             );
 
             // Make sure future pulls at the same price tick will not compute available funds based on already withdrawn
             // funds.
-            //* should not underflow: auctionToTransfer <= allocationAtPrice <= priceToQuantity[clearingPriceTick]
-            priceToQuantity[clearingPriceTick] = TFHE.sub(priceToQuantity[clearingPriceTick], auctionToTransfer);
-            TFHE.allowThis(priceToQuantity[clearingPriceTick]);
+            //* should not underflow: auctionToTransfer <= allocationAtPrice <= priceToQuantity[settlementPriceTick]
+            priceToQuantity[settlementPriceTick] = TFHE.sub(priceToQuantity[settlementPriceTick], auctionToTransfer);
+            TFHE.allowThis(priceToQuantity[settlementPriceTick]);
         }
 
         _bid.tombstone = true;

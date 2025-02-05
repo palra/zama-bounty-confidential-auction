@@ -109,7 +109,7 @@ library HalfEncryptedFenwickTree {
     /// cumulative quantity is equal or higher than targetQuantity?". If that index does not exists, the search will
     /// resolve to the largest index.
     /// @dev In the context of the single-price auction, we will need to fallback to the latest index to make sure
-    /// that auctions that did not fulfilled the entirety of the distributed tokens will still point to the clearing
+    /// that auctions that did not fulfilled the entirety of the distributed tokens will still point to the settlement
     /// price. This behavior can be changed if needed, for instance setting `fallbackIdx` to `TFHE.asEuint16(0)` can be
     /// used to mark a "not found" index.
     function startSearchKey(Storage storage _this, uint128 targetQuantity) internal returns (SearchKeyIterator memory) {
