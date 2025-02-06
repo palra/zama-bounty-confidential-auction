@@ -2,7 +2,7 @@
 
 My submission for the [Zama Bounty Program on the fhEVM, season 7](https://github.com/zama-ai/bounty-program/issues/136).
 
-[You can found some information on design considerations on the related documentation file.](./docs/design-considerations.md)
+[You can find some information on design considerations in the related documentation file.](./docs/design-considerations.md)
 
 ## User guide
 
