@@ -77,7 +77,7 @@ contract ConfidentialSPA is
     euint64 private immutable E_AUCTION_TOKEN_SUPPLY;
     euint128 private immutable EU128_ZERO;
     euint64 private immutable EU64_ZERO;
-    euint16 private immutable EU16_ZERO;
+    euint8 private immutable EU8_ZERO;
 
     /// @notice When the auction is resolved, the cleartext settlement price will be decrypted and set here.
     uint16 public settlementPriceTick;
@@ -150,19 +150,36 @@ contract ConfidentialSPA is
 
         priceMap.init();
 
+        // Encrypted constants initialization
         EU128_ZERO = TFHE.asEuint128(0);
         TFHE.allowThis(EU128_ZERO);
         EU64_ZERO = TFHE.asEuint64(0);
         TFHE.allowThis(EU64_ZERO);
-        EU16_ZERO = TFHE.asEuint16(0);
-        TFHE.allowThis(EU16_ZERO);
+        EU8_ZERO = TFHE.asEuint8(0);
+        TFHE.allowThis(EU8_ZERO);
     }
 
     function depositAuction() external onlyState(AuctionState.WaitDeposit) onlyOwner {
-        _transferIntoContractWithCheck(msg.sender, E_AUCTION_TOKEN_SUPPLY, AUCTION_TOKEN);
-        // TODO: check for success, decrypt it then change the state in the callback
+        ebool success = _transferIntoContractWithCheck(msg.sender, E_AUCTION_TOKEN_SUPPLY, AUCTION_TOKEN);
+        _setError(_errorDefineIfNot(success, uint8(ErrorCodes.TRANSFER_FAILED)));
 
-        auctionState = AuctionState.Active;
+        // Request decryption of success
+        uint256[] memory cts = new uint256[](1);
+        cts[0] = Gateway.toUint256(success);
+
+        Gateway.requestDecryption(
+            cts,
+            this.callbackDepositAuction.selector,
+            0,
+            block.timestamp + CALLBACK_MAX_DURATION,
+            false
+        );
+    }
+
+    function callbackDepositAuction(uint256, bool isSuccess) external onlyGateway onlyState(AuctionState.WaitDeposit) {
+        if (isSuccess) {
+            auctionState = AuctionState.Active;
+        }
     }
 
     /// @notice Submit a bid at a given price for an encrypted amount.
@@ -183,7 +200,7 @@ contract ConfidentialSPA is
         TFHE.isSenderAllowed(quantity);
 
         // Validate input
-        // `quantity` can't be greater than the auctionned token supply
+        // `quantity` can't be greater than the auctioned token supply
         ebool invalidQuantity = TFHE.gt(quantity, AUCTION_TOKEN_SUPPLY);
         quantity = TFHE.select(invalidQuantity, EU64_ZERO, quantity);
         euint8 errorCode = _errorDefineIf(invalidQuantity, uint8(ErrorCodes.VALIDATION_ERROR));
@@ -204,7 +221,7 @@ contract ConfidentialSPA is
         // Update data structures
         // If there is an error, perform a no-op
         quantity = TFHE.select(
-            TFHE.eq(errorCode, EU16_ZERO), // = no errorm
+            TFHE.eq(errorCode, EU8_ZERO), // = no error
             quantity,
             EU64_ZERO
         );
@@ -285,7 +302,7 @@ contract ConfidentialSPA is
         return auctionState == AuctionState.WithdrawalPending;
     }
 
-    /// @notice When the withdrawal decryption was initiated, steps through the decryption process.
+    /// @notice When the withdrawal decryption is initiated, steps through the decryption process.
     /// @dev Decryption is an asynchronous process. While the contract waits for the decryption, the method is locked to
     /// prevent race conditions. The lock is freed as soon as the decryption result is persisted in the contract or
     /// after a timeout.
@@ -484,13 +501,16 @@ contract ConfidentialSPA is
             : TFHE.asEuint64(0);
         _transferTo(_bidder, baseToTransfer, BASE_TOKEN);
 
+        addressToBaseTokenDeposit[_bidder] = euint64.wrap(0);
+
         TFHE.cleanTransientStorage();
     }
 
     // Price transformation
 
     /// @dev Transforms a price in the interval [MIN_PRICE, MAX_PRICE) to a uint16 in the interval [255, 0). Performs a
-    /// linear interpolation, which is not ideal for financial applications.
+    /// linear interpolation, which is not ideal for financial applications but serves as a good enough demonstration
+    /// method.
     /// @param price The price to transform.
     /// @return The transformed price as a uint16 tick.
     function priceToTick(uint64 price) public view returns (uint16) {
@@ -508,6 +528,28 @@ contract ConfidentialSPA is
 
         uint64 ratio = ((tick - 1) * (MAX_PRICE - MIN_PRICE)) / (type(uint16).max);
         return MAX_PRICE - ratio;
+    }
+
+    // Error handling
+
+    /// @notice Reads the last encrypted error for the caller.
+    /// @return errorCode The encrypted error code.
+    /// @return at The timestamp at which the error was raised.
+    function getLastEncryptedError() external view returns (euint8 errorCode, uint256 at) {
+        LastError storage err = lastErrorByAddress[msg.sender];
+        errorCode = _errorGetCodeEmitted(err.errorIndex);
+        at = err.at;
+    }
+
+    function getEncryptedErrorIndex(uint256 errorIndex) external view returns (euint8 errorCode) {
+        return _errorGetCodeEmitted(errorIndex);
+    }
+
+    function _setError(euint8 errorCode) private {
+        TFHE.allow(errorCode, msg.sender);
+        uint256 errorIndex = _errorSave(errorCode);
+        lastErrorByAddress[msg.sender] = LastError({ errorIndex: errorIndex, at: block.timestamp });
+        emit ErrorChanged(msg.sender, errorIndex);
     }
 
     // Encrypted transfer utils
@@ -530,27 +572,5 @@ contract ConfidentialSPA is
     function _transferTo(address _to, euint64 _amount, IConfidentialERC20 _token) internal {
         TFHE.allowTransient(_amount, address(_token));
         _token.transfer(_to, _amount);
-    }
-
-    // Error handling
-
-    /// @notice Reads the last encrypted error for the caller.
-    /// @return errorCode The encrypted error code.
-    /// @return at The timestamp at which the error was raised.
-    function getLastEncryptedError() external view returns (euint8 errorCode, uint256 at) {
-        LastError storage err = lastErrorByAddress[msg.sender];
-        errorCode = _errorGetCodeEmitted(err.errorIndex);
-        at = err.at;
-    }
-
-    function getEncryptedErrorIndex(uint256 errorIndex) external view returns (euint8 errorCode) {
-        return _errorGetCodeEmitted(errorIndex);
-    }
-
-    function _setError(euint8 errorCode) private {
-        TFHE.allow(errorCode, msg.sender);
-        uint256 errorIndex = _errorSave(errorCode);
-        lastErrorByAddress[msg.sender] = LastError({ errorIndex: _errorSave(errorCode), at: block.timestamp });
-        emit ErrorChanged(msg.sender, errorIndex);
     }
 }
