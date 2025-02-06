@@ -1,68 +1,14 @@
-# Hardhat Template [![Open in Gitpod][gitpod-badge]][gitpod] [![Github Actions][gha-badge]][gha] [![Hardhat][hardhat-badge]][hardhat] [![License: MIT][license-badge]][license]
+# Zama Bounty Program - Confidential Single-Price Auction
 
-[gitpod]: https://gitpod.io/#https://github.com/zama-ai/fhevm-hardhat-template
-[gitpod-badge]: https://img.shields.io/badge/Gitpod-Open%20in%20Gitpod-FFB45B?logo=gitpod
-[gha]: https://github.com/zama-ai/fhevm-hardhat-template/actions
-[gha-badge]: https://github.com/zama-ai/fhevm-hardhat-template/actions/workflows/ci.yml/badge.svg
-[hardhat]: https://hardhat.org/
-[hardhat-badge]: https://img.shields.io/badge/Built%20with-Hardhat-FFDB1C.svg
-[license]: https://opensource.org/licenses/MIT
-[license-badge]: https://img.shields.io/badge/License-MIT-blue.svg
+My submission for the [Zama Bounty Program on the fhEVM, season 7](https://github.com/zama-ai/bounty-program/issues/136).
 
-A Hardhat-based template for developing Solidity smart contracts, with sensible defaults.
+[You can found some information on design considerations on the related documentation file.](./docs/design-considerations.md)
 
-- [Hardhat](https://github.com/nomiclabs/hardhat): compile, run and test smart contracts
-- [TypeChain](https://github.com/ethereum-ts/TypeChain): generate TypeScript bindings for smart contracts
-- [Ethers](https://github.com/ethers-io/ethers.js/): renowned Ethereum library and wallet implementation
-- [Solhint](https://github.com/protofire/solhint): code linter
-- [Solcover](https://github.com/sc-forks/solidity-coverage): code coverage
-- [Prettier Plugin Solidity](https://github.com/prettier-solidity/prettier-plugin-solidity): code formatter
+## User guide
 
-## Getting Started
 
-Click the [`Use this template`](https://github.com/zama-ai/fhevm-hardhat-template/generate) button at the top of the
-page to create a new repository with this repo as the initial state.
 
-## Features
-
-This template builds upon the frameworks and libraries mentioned above, so for details about their specific features,
-please consult their respective documentations.
-
-For example, for Hardhat, you can refer to the [Hardhat Tutorial](https://hardhat.org/tutorial) and the
-[Hardhat Docs](https://hardhat.org/docs). You might be in particular interested in reading the
-[Testing Contracts](https://hardhat.org/tutorial/testing-contracts) section.
-
-### Sensible Defaults
-
-This template comes with sensible default configurations in the following files:
-
-```text
-├── .editorconfig
-├── .eslintignore
-├── .eslintrc.yml
-├── .gitignore
-├── .prettierignore
-├── .prettierrc.yml
-├── .solcover.js
-├── .solhint.json
-└── hardhat.config.ts
-```
-
-### VSCode Integration
-
-This template is IDE agnostic, but for the best user experience, you may want to use it in VSCode alongside Nomic
-Foundation's [Solidity extension](https://marketplace.visualstudio.com/items?itemName=NomicFoundation.hardhat-solidity).
-
-### GitHub Actions
-
-This template comes with GitHub Actions pre-configured. Your contracts will be linted and tested on every push and pull
-request made to the `main` branch.
-
-Note though that to make this work, you must use your `INFURA_API_KEY` and your `MNEMONIC` as GitHub secrets.
-
-You can edit the CI script in [.github/workflows/ci.yml](./.github/workflows/ci.yml).
-
-## Usage
+## Local development guide
 
 ### Pre Requisites
 
@@ -171,11 +117,11 @@ npx hardhat test [PATH_TO_YOUR_TEST] --network sepolia
 The `--network sepolia` flag will make your test run on a real fhevm coprocessor. Obviously, for the same tests to pass on Sepolia, contrarily to mocked mode, you are not allowed to use any hardhat node specific method, and neither use any of the `debug.decrypt[XX]` functions.
 
 > [!Note]
-> For this test to succeed, first ensure you set your own private `MNEMONIC` variable in the `.env` file and then  ensure you have funded your test accounts on Sepolia. For example you can use the following command to get the corresponding private keys associated with the first `5` accounts derived from the mnemonic: 
+> For this test to succeed, first ensure you set your own private `MNEMONIC` variable in the `.env` file and then  ensure you have funded your test accounts on Sepolia. For example you can use the following command to get the corresponding private keys associated with the first `5` accounts derived from the mnemonic:
 ```
 npx hardhat get-accounts --num-accounts 5
 ```
-This will let you add them to the Metamask app, to easily fund them from your personal wallet. 
+This will let you add them to the Metamask app, to easily fund them from your personal wallet.
 
 If you don't own already Sepolia test tokens, you can for example use a free faucet such as [https://sepolia-faucet.pk910.de/](https://sepolia-faucet.pk910.de/).
 
@@ -183,15 +129,15 @@ Another faster way to test the coprocessor on Sepolia is to simply run the follo
 ```
 pnpm deploy-sepolia
 ```
-This would automatically deploy an instance of the `MyConfidentialERC20` example contract on Sepolia. You could then use this other command to mint some amount of confidential tokens: 
+This would automatically deploy an instance of the `MyConfidentialERC20` example contract on Sepolia. You could then use this other command to mint some amount of confidential tokens:
 ```
 pnpm mint-sepolia
 ```
 
 ### Etherscan verification
 
-If you are using a real instance of the fhEVM, you can verify your deployed contracts on the Etherscan explorer. 
-You first need to set the `ETHERSCAN_API_KEY` variable in the `.env` file to a valid value. You can get such an API key for free by creating an account on the [Etherscan website](https://docs.etherscan.io/getting-started/viewing-api-usage-statistics). 
+If you are using a real instance of the fhEVM, you can verify your deployed contracts on the Etherscan explorer.
+You first need to set the `ETHERSCAN_API_KEY` variable in the `.env` file to a valid value. You can get such an API key for free by creating an account on the [Etherscan website](https://docs.etherscan.io/getting-started/viewing-api-usage-statistics).
 
 Then, simply use the `verify-deployed` hardhat task, via this command:
 ```

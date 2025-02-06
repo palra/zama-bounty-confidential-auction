@@ -1,3 +1,9 @@
+# Single-Price Auction State Diagram
+
+![State Diagram](./assets//state-diagram.png)
+
+### Source
+
 ```mermaid
 ---
 title: Single-price Auction with Half-Encrypted Fenwick Tree
@@ -50,11 +56,11 @@ stateDiagram-v2
 
     state Cancelled {
         [*] --> CancelledAuctioneerWaiting
-        CancelledAuctioneerWaiting --> CancelledAuctioneerWithdrawn: recoverTokensForSale()
+        CancelledAuctioneerWaiting --> CancelledAuctioneerWithdrawn: recoverAuctioneer() onlyOnce
         CancelledAuctioneerWithdrawn --> [*]
         --
         [*] --> CancelledBidderWaiting
-        CancelledBidderWaiting --> CancelledBidderRecovered: recoverBids()
+        CancelledBidderWaiting --> CancelledBidderRecovered: recoverBidder() onlyOnce
         CancelledBidderRecovered --> [*]
     }
 
