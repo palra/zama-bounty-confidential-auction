@@ -56,7 +56,7 @@ costly in gas and would make the decryption process impractical. We're not using
 discussed in the next section.
 
 An `uint16` can't represent all possible prices an `uint64` can represent, so a **price discretization function** is
-needed to map **from an `uint64` price to a `uint16` price tick**. It can be customized with any function, provided that
+needed to map **from a `uint64` price to a `uint16` price tick**. It can be customized with any function, provided that
 it is an increasing invertible function on `uint64` -> `uint16`. For the sake of demonstration, we will be using a
 _linear mapping function_. No matter what discretization function is chosen, `type(uint16).max` must be mapped to the
 lowest price and `1` to the highest price. We reserve `0` for bookkeeping purposes and because Fenwick trees algorithms
