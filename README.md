@@ -6,7 +6,131 @@ My submission for the [Zama Bounty Program on the fhEVM, season 7](https://githu
 
 ## User guide
 
+### Putting a token to auction
 
+If you have tokens you want to put to auction (referred as the **auctioneer**):
+
+1. Deploy the auction contract with your base parameters:
+   ```ts
+   const AUCTION_SUPPLY = 100_000n;
+   const ConfidentialSPA = await ethers.getContractFactory("ConfidentialSPA");
+   const auction = await ConfidentialSPA.deploy(
+    signer.address,            // Your address
+    tokenAuction.address,      // The address of the ConfidentialERC20 token you want to put to auction
+    AUCTION_SUPPLY,            // The amount of tokens you're putting to auction
+    tokenBase.address,         // The base currency on which bidders will have to deposit
+    time.latest() + 1 * month, // The timestamp at which the auction will be closed
+    0n,                        // Price discretization: minimum price to submit a bid, uint64 with 12 dec. points
+    10n ** 7n                  // Maximum price, uint64 with 12 dec. points
+   );
+   ```
+
+2. Approve transfer of the auctionned tokens, deposit the funds and check there are no errors
+   ```ts
+    const input = fhevm.createEncryptedInput(await tokenAuction.getAddress(), signer.address);
+    input.add64(AUCTION_SUPPLY);
+    const encryptedInput = await input.encrypt();
+
+    await token.connect(signer)[
+      "approve(address,bytes32,bytes)"
+    ](await auction.getAddress(), encryptedInput.handles[0], encryptedInput.inputProof);
+
+    await auction.depositAuction();
+
+    const [eErrorCode] = await auction.getLastEncryptedError();
+    const errorCode = await reencryptEuint8(..., eErrorCode, await auction.getAddress());
+    // errorCode === 0n
+   ```
+
+### Participate to an auction
+
+To participate to an auction at a given `price` for a given `quantity`:
+
+1. Set allowance to the base token at least at `price * quantity`.
+2. Create some no-op bids to submit alongside your original bid to preserve anonymity on your prices.
+   ```ts
+   async function bid(price: number | bigint, amount: number | bigint, signer: Signer) {
+     const input = fhevm.createEncryptedInput(contractAddress, await signer.getAddress());
+     input.add64(amount);
+
+     const encryptedInput = await input.encrypt();
+     return await contract.connect(signer).bid(price, encryptedInput.handles[0], encryptedInput.inputProof);
+   }
+
+   function randomPrice() {
+     return Math.floor(Math.random() * (1e7 - 1)); // Depends on the parameters of the auction
+   }
+
+   const ANONYMITY_ROUNDS = 3;
+   const bids = [
+     { price, quantity },
+     ...Array(ANONYMITY_ROUNDS).fill().map(() => ({ price: randomPrice(), quantity: 0 }))
+   ].sort((a, b) => a.price - b.price);
+
+   for (const { price, quantity } of bids) {
+     await bid(price, quantity, signer);
+   }
+   ```
+  > In this implementation, **bids cannot be cancelled** unless the auctioneer cancels the whole auction.
+
+### Decrypt the Settlement Price
+
+Once the auction time has passed, we must go through the decryption process. This can be called by anyone, for automation purposes, as it's just a
+matter of iteratively trigger decryptions by the co-processor:
+```ts
+await (await contract.startWithdrawalDecryption()).wait();
+
+if ((await contract.auctionState()) === 2n) { // 2 = Cancelled, there was no bid registered
+  return;
+}
+
+while (await contract.isRunningWithdrawalDecryption()) {
+  // Wait for the step lock to be available, trivial impl.
+  while(true) {
+    const lockExpirationDate = await contract.readTimeLockExpirationDate(await contract.TL_TAG_COMPUTE_SETTLEMENT_STEP());
+    if (lockExpirationDate === 0n || (+new Date() / 1000) > lockExpirationDate) {
+      break;
+    }
+
+    await setTimeout(5000);
+  }
+
+  // Call the next step
+  (await contract.stepWithdrawalDecryption()).wait();
+}
+```
+
+### Withdraw Funds
+
+Same as before, these methods can be called by anyone but will still redirect the funds to the concerned user:
+
+```ts
+// Auctioneer
+await contract.pullAuctioneer();
+
+// Bidder
+const bidder = await signer.getAddress();
+const bidsQuantity = await contract.getBidsLengthByBidder(bidder);
+for (let i = 0; i < bidsQuantity; i++) {
+  await contract.pullBid(bidder, i);
+}
+```
+
+Bidders that want to preserve anonymity on the price they proposed can sequentially decrypt all the bids they submitted, including their no-ops.
+If anonymity is not a concern after the auction resolution, they can specifically pull the no-op bids, leaving the others untouched.n
+
+### Cancel an Auction
+
+Anytime before the auction ends, the auctioneer may cancel the auction. When that happens, all users can withdraw their locked funds:
+
+```ts
+// Auctioneer
+await contract.connect(auctioneer.signer).cancel();
+await contract.recoverAuctioneer();
+
+// Bidder
+await contract.recoverBids();
+```
 
 ## Local development guide
 

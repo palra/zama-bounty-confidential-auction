@@ -265,6 +265,7 @@ contract ConfidentialSPA is
         if (auctionState == AuctionState.Cancelled) revert NotInRequiredState();
         if (auctionState == AuctionState.WithdrawalPending) revert NotInRequiredState();
         if (auctionState == AuctionState.WithdrawalReady) revert NotInRequiredState();
+        if (block.timestamp >= AUCTION_END) revert NotInRequiredState();
 
         auctionState = AuctionState.Cancelled;
     }
@@ -341,7 +342,8 @@ contract ConfidentialSPA is
         uint16 found
     ) external onlyState(AuctionState.WithdrawalPending) onlyGateway {
         settlementPriceTick = found;
-        // The settlement price has been found, we'll never need to compute it again. Lock settlement price compute forever.
+        // The settlement price has been found, we'll never need to compute it again.
+        // Lock settlement price compute forever.
         _lockForever(TL_TAG_COMPUTE_SETTLEMENT);
         _lockForever(TL_TAG_COMPUTE_SETTLEMENT_STEP);
 
@@ -382,19 +384,14 @@ contract ConfidentialSPA is
         TFHE.cleanTransientStorage();
     }
 
+    /// @notice Returns the number of bids created by a given bidder.
+    function getBidsLengthByBidder(address _bidder) external view returns (uint256) {
+        return addressToBids[_bidder].length;
+    }
+
     /// @notice When the auction is resolved, pull funds owed by a given bidde for a specific bid.
     /// @dev Can be called by anyone, the funds will always be transfered to the auctioneer - for automation purposes.
     function pullBid(address _bidder, uint256 _index) external nonReentrant {
-        _pullBidByIndex(_bidder, _index);
-    }
-
-    /// TODO: to be removed.
-    function popBid(address bidder) external nonReentrant {
-        if (addressToBids[bidder].length == 0) revert OutOfBounds();
-        _pullBidByIndex(bidder, addressToBids[bidder].length - 1);
-    }
-
-    function _pullBidByIndex(address _bidder, uint256 _index) private {
         if (_index >= addressToBids[_bidder].length) revert OutOfBounds();
         Bid storage _bid = addressToBids[_bidder][_index];
         if (_bid.tombstone) {
@@ -420,7 +417,8 @@ contract ConfidentialSPA is
             auctionToTransfer = _bid.quantity;
             euint128 eQuantity = TFHE.asEuint128(_bid.quantity);
             // Claring price is lower than the quantity previously secured, refund remaining.
-            //* should not overflow: settlementPrice < _bid.price => (_bid.quantity * settlementPrice) / 1e6 < _bid.deposit
+            //* should not overflow: settlementPrice < _bid.price =>
+            //*                      (_bid.quantity * settlementPrice) / 1e6 < _bid.deposit
             baseToTransfer = TFHE.sub(
                 _bid.deposit,
                 TFHE.asEuint64(TFHE.div(TFHE.mul(eQuantity, settlementPrice), 1e6))
@@ -481,7 +479,7 @@ contract ConfidentialSPA is
         onlyState(AuctionState.Cancelled)
         checkTimeLockTag(TL_TAG_RECOVER_AUCTIONEER)
     {
-        _lockForever(TL_TAG_RECOVER_AUCTIONEER);
+        _lockForever(TL_TAG_RECOVER_AUCTIONEER); // Prevent further calls and serves as a reentrancy guard
 
         euint64 auctionToTransfer = TFHE.asEuint64(AUCTION_TOKEN_SUPPLY);
         _transferTo(owner(), auctionToTransfer, AUCTION_TOKEN);
@@ -494,7 +492,7 @@ contract ConfidentialSPA is
     function recoverBidder(
         address _bidder
     ) external onlyState(AuctionState.Cancelled) checkTimeLockTag(TL_TAG_RECOVER_BIDDER(_bidder)) {
-        _lockForever(TL_TAG_RECOVER_BIDDER(_bidder));
+        _lockForever(TL_TAG_RECOVER_BIDDER(_bidder)); // Prevent further calls and serves as a reentrancy guard
 
         euint64 baseToTransfer = TFHE.isInitialized(addressToBaseTokenDeposit[_bidder])
             ? addressToBaseTokenDeposit[_bidder]

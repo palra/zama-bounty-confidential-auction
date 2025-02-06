@@ -187,7 +187,7 @@ describe("Confidential FenwickTree", () => {
 
     await (await contract.connect(signers.alice).pullAuctioneer()).wait();
     for (const signer of [signers.bob, signers.carol, signers.dave]) {
-      await (await contract.connect(signer).popBid(signer.address)).wait();
+      await (await contract.connect(signer).pullBid(signer.address, 0)).wait();
     }
 
     expect(await balanceOf(contractAddress, tokenAuction)).to.equal(0n);
@@ -221,7 +221,7 @@ describe("Confidential FenwickTree", () => {
 
       await (await contract.connect(signers.alice).pullAuctioneer()).wait();
       for (const signer of [signers.bob, signers.carol, signers.dave]) {
-        await (await contract.connect(signer).popBid(signer.address)).wait();
+        await (await contract.connect(signer).pullBid(signer.address, 0)).wait();
       }
 
       expect(await balanceOf(contractAddress, tokenAuction)).to.equal(0n);
@@ -256,7 +256,7 @@ describe("Confidential FenwickTree", () => {
 
       // order matters
       for (const signer of [signers.carol, signers.dave, signers.bob]) {
-        await (await contract.connect(signer).popBid(signer.address)).wait();
+        await (await contract.connect(signer).pullBid(signer.address, 0)).wait();
       }
 
       expect(await balanceOf(contractAddress, tokenAuction)).to.equal(0n);
@@ -291,7 +291,7 @@ describe("Confidential FenwickTree", () => {
       await (await contract.connect(signers.alice).pullAuctioneer()).wait();
 
       for (const signer of [signers.bob, signers.carol, signers.dave, signers.eve]) {
-        await (await contract.connect(signer).popBid(signer.address)).wait();
+        await (await contract.connect(signer).pullBid(signer.address, 0)).wait();
       }
 
       expect(await balanceOf(contractAddress, tokenAuction)).to.equal(0n);
@@ -479,7 +479,7 @@ describe("Confidential FenwickTree", () => {
       await expect(contract.callbackWithdrawalDecryptionStep(0, 1)).to.be.revertedWithoutReason;
       await expect(contract.callbackWithdrawalDecryptionFinal(1, 65535)).to.be.revertedWithoutReason;
     });
-    context("when cancelled", () => {
+    context("cancellation", () => {
       it("should recover funds only once per actor", async () => {
         await contract.connect(signers.alice).depositAuction();
         await awaitAllDecryptionResults();
@@ -501,6 +501,27 @@ describe("Confidential FenwickTree", () => {
           expect(await balanceOf(bidder.address, tokenAuction)).to.equal(0);
           expect(await balanceOf(bidder.address, tokenBase)).to.equal(1_000_000_000);
         }
+      });
+
+      it("should not allow cancellation if the auction end has already been reached", async () => {
+        await contract.connect(signers.alice).depositAuction();
+        await awaitAllDecryptionResults();
+
+        await bid(parsePrice("0.000_002"), 500_000, signers.bob);
+        await bid(parsePrice("0.000_002"), 500_000, signers.carol);
+        await bid(parsePrice("0.000_001"), 100_000, signers.carol);
+
+        await time.setNextBlockTimestamp(await contract.AUCTION_END());
+        await expect(contract.connect(signers.alice).cancel()).to.be.revertedWithCustomError(
+          contract,
+          "NotInRequiredState",
+        );
+
+        await time.increase(1000);
+        await expect(contract.connect(signers.alice).cancel()).to.be.revertedWithCustomError(
+          contract,
+          "NotInRequiredState",
+        );
       });
     });
     context("when withdrawal ready", () => {
